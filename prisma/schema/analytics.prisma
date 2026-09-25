@@ -1,0 +1,240 @@
+// ---------------------------------------------------------------------------
+// Growth and business health (points 68 to 90).
+//
+// The design rule for this whole module: a closed snapshot is FROZEN. Points 70
+// and 83 ask that history never be restated by future configuration, so the
+// growth charts read snapshot rows, they never recompute past months from live
+// data. A DRAFT snapshot is a live projection of the period in progress; closing
+// it copies the numbers in and makes them permanent.
+// ---------------------------------------------------------------------------
+
+/// A weekly or monthly business snapshot. One row per organization per period.
+model PeriodSnapshot {
+  id             String @id @default(cuid())
+  organizationId String
+
+  kind   SnapshotKind
+  status SnapshotStatus @default(DRAFT)
+
+  /// Inclusive period bounds, in the organization time zone.
+  periodStart DateTime @db.Date
+  periodEnd   DateTime @db.Date
+  /// Denormalized for cheap ordering and labelling: 2026 and 9, or 2026 and
+  /// ISO week 39.
+  periodYear  Int
+  periodIndex Int
+
+  // --- Equity (point 80) ---------------------------------------------------
+  /// Equity at the start of the period, carried from the previous snapshot.
+  openingEquity Decimal @db.Decimal(18, 2)
+  /// openingEquity + netProfit + contributions - withdrawals
+  closingEquity Decimal @db.Decimal(18, 2)
+  /// Owner money added during the period. Growth by contribution, NOT by
+  /// operation, and reported separately for exactly that reason.
+  ownerContributions Decimal @db.Decimal(18, 2)
+  ownerWithdrawals   Decimal @db.Decimal(18, 2)
+
+  // --- Capital position ----------------------------------------------------
+  /// Principal outstanding across all loans at period end.
+  principalOutstanding Decimal @db.Decimal(18, 2)
+  /// Cash available at period end, across all accounts.
+  cashAvailable        Decimal @db.Decimal(18, 2)
+  /// Principal handed out during the period.
+  principalDisbursed   Decimal @db.Decimal(18, 2)
+  /// Principal collected back during the period. Never counted as profit.
+  principalRecovered   Decimal @db.Decimal(18, 2)
+
+  // --- Profit and loss -----------------------------------------------------
+  /// Interest that became an obligation during the period (accrual basis).
+  interestAccrued  Decimal @db.Decimal(18, 2)
+  /// Interest actually collected during the period (cash basis). Point 27
+  /// requires both, and they are almost never equal.
+  interestCollected Decimal @db.Decimal(18, 2)
+  otherIncome      Decimal @db.Decimal(18, 2)
+  operatingExpenses Decimal @db.Decimal(18, 2)
+  /// interestCollected + otherIncome - operatingExpenses
+  netProfitCash    Decimal @db.Decimal(18, 2)
+  /// interestAccrued + otherIncome - operatingExpenses
+  netProfitAccrual Decimal @db.Decimal(18, 2)
+
+  // --- Portfolio health ----------------------------------------------------
+  /// Principal + interest still owed at period end.
+  portfolioOutstanding Decimal @db.Decimal(18, 2)
+  /// Portion of the above attached to overdue periods.
+  portfolioOverdue     Decimal @db.Decimal(18, 2)
+
+  // --- Operational counters ------------------------------------------------
+  activeClients   Int
+  activeLoans     Int
+  newLoans        Int
+  settledLoans    Int
+  renewals        Int
+  overdueLoans    Int
+  /// Average days late across overdue loans, rounded to whole days.
+  avgOverdueDays  Int @default(0)
+
+  /// Data-only observations generated at closing time (point 82). Stored as a
+  /// JSON array of message objects so the executive summary is reproducible
+  /// exactly as it was worded when the month closed.
+  executiveNotes Json?
+
+  closedById String?
+  closedAt   DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  closedBy     User?        @relation(fields: [closedById], references: [id], onDelete: SetNull)
+
+  metrics      PeriodSnapshotMetric[]
+  agingBuckets PortfolioAgingBucket[]
+
+  @@unique([organizationId, kind, periodStart])
+  @@index([organizationId, kind, periodYear, periodIndex])
+  @@index([organizationId, kind, status])
+  @@map("period_snapshots")
+}
+
+/// A single derived ratio belonging to a snapshot (point 73).
+///
+/// Numerator and denominator are stored alongside the result so every percentage
+/// in the UI can show its own arithmetic. When the denominator is zero the value
+/// is null and isComparable is false, which is how the UI renders "N/D" with an
+/// explanation instead of Infinity or a misleading 0%.
+model PeriodSnapshotMetric {
+  id             String @id @default(cuid())
+  organizationId String
+  snapshotId     String
+
+  /// Stable key, e.g. "net_margin", "expense_ratio", "delinquency_ratio",
+  /// "recovery_ratio", "equity_growth", "profit_growth".
+  metricKey   String
+  numerator   Decimal  @db.Decimal(18, 2)
+  denominator Decimal  @db.Decimal(18, 2)
+  /// numerator / denominator * 100, or null when not comparable.
+  value       Decimal? @db.Decimal(12, 4)
+  isComparable Boolean @default(true)
+  /// Why it is not comparable, shown verbatim to the user.
+  notComparableReason String?
+
+  /// Same metric from the immediately previous snapshot, for the variation
+  /// arrows, frozen here so comparisons never drift.
+  previousValue Decimal? @db.Decimal(12, 4)
+
+  createdAt DateTime @default(now())
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  snapshot     PeriodSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, metricKey])
+  @@index([organizationId, metricKey])
+  @@map("period_snapshot_metrics")
+}
+
+/// Aging of overdue portfolio at snapshot time (point 79).
+model PortfolioAgingBucket {
+  id         String @id @default(cuid())
+  snapshotId String
+
+  /// Inclusive lower bound in days late.
+  fromDays Int
+  /// Inclusive upper bound; null means open-ended (the 90+ bucket).
+  toDays   Int?
+  label    String
+
+  loanCount   Int
+  clientCount Int
+  principalAmount Decimal @db.Decimal(18, 2)
+  interestAmount  Decimal @db.Decimal(18, 2)
+  totalAmount     Decimal @db.Decimal(18, 2)
+
+  snapshot PeriodSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, fromDays])
+  @@map("portfolio_aging_buckets")
+}
+
+/// Configurable business targets (point 85).
+model Goal {
+  id             String @id @default(cuid())
+  organizationId String
+
+  kind      GoalKind
+  direction GoalDirection
+  label     String
+  /// Money for absolute goals, percentage points for ratio goals. The unit is
+  /// implied by kind and rendered accordingly.
+  targetValue Decimal @db.Decimal(18, 4)
+
+  /// Optional window. Null means the goal is evaluated against the current
+  /// period for periodic kinds, or all time for cumulative ones.
+  effectiveFrom DateTime? @db.Date
+  effectiveTo   DateTime? @db.Date
+
+  isActive  Boolean  @default(true)
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, isActive])
+  @@index([organizationId, kind])
+  @@map("goals")
+}
+
+/// Admin-defined alert thresholds (point 86). No threshold is ever hardcoded;
+/// if there is no rule, there is no alert.
+model AlertRule {
+  id             String @id @default(cuid())
+  organizationId String
+
+  metric     AlertMetric
+  comparator AlertComparator
+  /// Threshold in the metric natural unit: percentage points for ratios, money
+  /// for amounts, whole units for counts.
+  threshold  Decimal         @db.Decimal(18, 4)
+  severity   AlertSeverity   @default(WARNING)
+
+  label     String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  events       AlertEvent[]
+
+  @@unique([organizationId, metric, comparator, threshold])
+  @@index([organizationId, isActive])
+  @@map("alert_rules")
+}
+
+/// One firing of an alert rule, with the observed value that triggered it.
+model AlertEvent {
+  id             String @id @default(cuid())
+  organizationId String
+  ruleId         String
+
+  observedValue Decimal       @db.Decimal(18, 4)
+  threshold     Decimal       @db.Decimal(18, 4)
+  severity      AlertSeverity
+  /// Rendered message, frozen at firing time.
+  message       String
+
+  status     AlertEventStatus @default(OPEN)
+  triggeredAt DateTime        @default(now())
+  /// Business date the evaluation refers to.
+  evaluatedOn DateTime        @db.Date
+
+  acknowledgedById String?
+  acknowledgedAt   DateTime?
+  resolvedAt       DateTime?
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rule            AlertRule    @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  acknowledgedBy  User?        @relation("AlertAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull)
+
+  @@unique([ruleId, evaluatedOn])
+  @@index([organizationId, status, triggeredAt])
+  @@map("alert_events")
+}

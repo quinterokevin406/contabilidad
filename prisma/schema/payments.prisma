@@ -1,0 +1,95 @@
+// ---------------------------------------------------------------------------
+// Payments and their allocations.
+//
+// Point 10 is non-negotiable: a payment never stores only a total. Every peso
+// carries a destination row in PaymentAllocation, naming the kind (interest,
+// principal, fee) and, for interest, the exact period it settled. Summing
+// allocations reconstructs any balance in the system from scratch, which is what
+// makes the whole ledger auditable.
+//
+// A payment is never deleted or edited. A mistake is corrected by posting a
+// reversal (points 33 and 34), which flips status to REVERSED and writes
+// compensating cash movements.
+// ---------------------------------------------------------------------------
+
+model Payment {
+  id             String @id @default(cuid())
+  organizationId String
+  loanId         String
+  clientId       String
+
+  /// Sequential receipt number, assigned inside the posting transaction.
+  receiptNumber String
+
+  /// Total cash received. Must equal the sum of its allocations, enforced in the
+  /// service layer and asserted by tests.
+  amount Decimal @db.Decimal(18, 2)
+
+  /// Business date of the payment, in the organization time zone.
+  paidOn   DateTime @db.Date
+  /// Exact instant the row was posted, for audit ordering.
+  postedAt DateTime @default(now())
+
+  paymentMethodId String?
+
+  /// True when the operator distributed the money by hand (point 11) instead of
+  /// letting the loan allocation strategy decide.
+  manualAllocation Boolean @default(false)
+  /// Strategy actually used, frozen for the record even if the loan changes.
+  strategyApplied  AllocationStrategy
+
+  status PaymentStatus @default(POSTED)
+
+  /// Set when this payment was reversed. The row itself is preserved.
+  reversedAt   DateTime?
+  reversalId   String?   @unique
+
+  notes       String?
+  createdById String?
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  loan          Loan           @relation(fields: [loanId], references: [id], onDelete: Restrict)
+  client        Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  paymentMethod PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  createdBy     User?          @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  reversal      Reversal?      @relation(fields: [reversalId], references: [id], onDelete: SetNull)
+
+  allocations   PaymentAllocation[]
+  cashMovements CashMovement[]
+  renewal       Renewal?
+
+  @@unique([organizationId, receiptNumber])
+  @@index([organizationId, paidOn])
+  @@index([organizationId, status])
+  @@index([loanId, paidOn])
+  @@index([clientId, paidOn])
+  @@map("payments")
+}
+
+/// One destination of one peso bundle inside a payment.
+model PaymentAllocation {
+  id             String @id @default(cuid())
+  organizationId String
+  paymentId      String
+
+  kind   AllocationKind
+  amount Decimal        @db.Decimal(18, 2)
+
+  /// Required for INTEREST allocations: which period this settled. Null for
+  /// PRINCIPAL, which reduces the loan balance rather than a specific period.
+  loanPeriodId String?
+
+  /// Free-text concept for FEE allocations.
+  concept String?
+
+  createdAt DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payment      Payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  loanPeriod   LoanPeriod?  @relation(fields: [loanPeriodId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+  @@index([loanPeriodId])
+  @@index([organizationId, kind])
+  @@map("payment_allocations")
+}

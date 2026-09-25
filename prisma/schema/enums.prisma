@@ -1,0 +1,270 @@
+// ---------------------------------------------------------------------------
+// Enums
+//
+// Every value that changes how money is computed is an explicit enum stored on
+// the owning row. Configuration is never read from a global default at read
+// time, so changing a setting tomorrow can never rewrite yesterday's numbers.
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  COLLECTOR
+  VIEWER
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+/// How the periodic interest amount is derived.
+enum InterestMethod {
+  /// interest = originalPrincipal * ratePerPeriod
+  SIMPLE_ON_ORIGINAL_PRINCIPAL
+  /// interest = outstandingPrincipal at period start * ratePerPeriod
+  SIMPLE_ON_OUTSTANDING_PRINCIPAL
+}
+
+enum Periodicity {
+  DAILY
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  CUSTOM
+}
+
+/// How a due date advances from the previous one.
+enum PeriodAnchor {
+  /// Calendar arithmetic: 31 Jan + 1 month = 28/29 Feb (clamped to month end).
+  CALENDAR
+  /// Pure day arithmetic: always + N days, ignoring month length.
+  FIXED_DAYS
+}
+
+/// Rounding applied when a computed amount has sub-unit precision.
+enum RoundingMode {
+  HALF_UP
+  HALF_EVEN
+  DOWN
+  UP
+}
+
+/// Vigencia of the loan. Orthogonal to ComplianceStatus on purpose.
+enum LoanLifecycle {
+  ACTIVE
+  PAID
+  CANCELLED
+  ARCHIVED
+}
+
+/// Cumplimiento of the loan. A loan can be ACTIVE and OVERDUE at once, which is
+/// exactly why this is a separate column and not a single mixed enum.
+enum ComplianceStatus {
+  CURRENT
+  DUE_SOON
+  OVERDUE
+}
+
+enum LoanPeriodStatus {
+  /// Scheduled but not yet accrued.
+  SCHEDULED
+  /// Accrued and fully unpaid.
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  /// Closed by an explicit waiver, with audit trail.
+  WAIVED
+}
+
+/// How the period in progress is charged when a client settles early.
+/// Changing this changes what a client owes, so it is stored per loan and the
+/// value actually applied is recorded on the Settlement row.
+enum OpenPeriodPolicy {
+  /// Only interest that has already come due is owed. Consistent with accrual:
+  /// interest becomes an obligation on the due date.
+  NOT_CHARGED
+  /// The period in progress is charged in full, as if it had matured.
+  FULL_PERIOD
+  /// The period in progress is charged by elapsed days.
+  PRORATED
+}
+
+/// Which date a renewed period is measured from.
+enum RenewalDueBasis {
+  /// The contract keeps its rhythm: a loan due the 24th stays due the 24th.
+  PREVIOUS_DUE_DATE
+  /// The clock restarts on the day the client actually paid.
+  EFFECTIVE_DATE
+}
+
+/// Default order in which an automatic payment consumes the debt.
+enum AllocationStrategy {
+  INTEREST_FIRST
+  PRINCIPAL_FIRST
+  MANUAL_ONLY
+}
+
+/// What a single peso of a payment was applied to.
+enum AllocationKind {
+  INTEREST
+  PRINCIPAL
+  FEE
+}
+
+enum PaymentStatus {
+  POSTED
+  REVERSED
+}
+
+enum SettlementKind {
+  /// Paid to zero by the client.
+  FULL_PAYMENT
+  /// Closed by administrative decision; remainder written off.
+  WRITE_OFF
+}
+
+enum CashMovementType {
+  CAPITAL_CONTRIBUTION
+  LOAN_DISBURSEMENT
+  PRINCIPAL_RECOVERY
+  INTEREST_COLLECTION
+  FEE_COLLECTION
+  EXTRAORDINARY_INCOME
+  EXPENSE
+  OWNER_WITHDRAWAL
+  ADJUSTMENT
+  /// Principal closed as uncollectable. Moves no cash — the money left the till
+  /// when the loan was disbursed — but it IS a real loss, so it is classified as
+  /// an operating expense and carries affectsCash = false.
+  PRINCIPAL_WRITE_OFF
+}
+
+enum CashDirection {
+  IN
+  OUT
+}
+
+/// The accounting meaning of a movement. This is the guard rail behind point 88:
+/// an admin may create any custom category they like, but the category must
+/// declare one of these classes, and the class is what every report sums by.
+/// Principal recovery can therefore never be counted as profit by accident.
+enum FinancialClass {
+  /// Principal moving out (disbursement) or back in (recovery). Never P&L.
+  PRINCIPAL
+  /// Interest earned. Operating revenue.
+  INTEREST
+  /// Non-interest operating revenue.
+  OPERATING_INCOME
+  /// Operating cost. Reduces net profit.
+  OPERATING_EXPENSE
+  /// Owner puts money in. Equity, never revenue.
+  EQUITY_CONTRIBUTION
+  /// Owner takes money out. Equity, never expense.
+  EQUITY_WITHDRAWAL
+  /// Movement between own accounts. Net zero.
+  TRANSFER
+}
+
+enum CapitalEventKind {
+  CONTRIBUTION
+  WITHDRAWAL
+}
+
+enum SnapshotKind {
+  WEEKLY
+  MONTHLY
+}
+
+enum SnapshotStatus {
+  DRAFT
+  CLOSED
+}
+
+enum GoalKind {
+  EQUITY_TARGET
+  MONTHLY_PROFIT
+  MAX_DELINQUENCY_RATIO
+  MAX_MONTHLY_EXPENSE
+  INTEREST_COLLECTED
+  RECOVERY_RATIO
+}
+
+enum GoalDirection {
+  /// Higher is better; progress = actual / target.
+  AT_LEAST
+  /// Lower is better; the goal is a ceiling.
+  AT_MOST
+}
+
+enum AlertMetric {
+  DELINQUENCY_RATIO
+  MONTHLY_EXPENSE_TOTAL
+  EXPENSE_TO_INCOME_RATIO
+  OVERDUE_LOAN_COUNT
+  OVERDUE_DAYS_MAX
+  CASH_DISCREPANCY_ABS
+  MISSING_MONTHLY_CLOSURE
+  MISSING_DAILY_CLOSURE
+}
+
+enum AlertComparator {
+  GREATER_THAN
+  GREATER_OR_EQUAL
+  LESS_THAN
+  LESS_OR_EQUAL
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum AlertEventStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  REVERSE
+  ARCHIVE
+  LOGIN
+  LOGIN_FAILED
+  LOGOUT
+  EXPORT
+  SETTINGS_CHANGE
+}
+
+enum ReversalTargetType {
+  PAYMENT
+  CASH_MOVEMENT
+  EXPENSE_ENTRY
+  INCOME_ENTRY
+  CAPITAL_EVENT
+  RENEWAL
+  LOAN_DISBURSEMENT
+}
+
+enum NotificationKind {
+  DUE_TODAY
+  DUE_TOMORROW
+  OVERDUE
+  PENDING_DAILY_CLOSURE
+  PENDING_MONTHLY_CLOSURE
+  ALERT_TRIGGERED
+}

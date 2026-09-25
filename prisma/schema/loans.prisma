@@ -1,0 +1,261 @@
+// ---------------------------------------------------------------------------
+// Loans and their periods.
+//
+// Point 3 is the law here: a loan stores every rule it runs on. Nothing is read
+// from a global setting at calculation time, so an admin changing a default
+// tomorrow cannot silently restate an existing loan.
+//
+// LoanPeriod is the backbone of the whole system. Interest is not derived on the
+// fly when a screen renders; it is materialized as one row per period, carrying
+// the exact principal basis and rate that were in force when it accrued. Every
+// interest figure in the product -- accrued, collected, pending, today's
+// collections, aging buckets -- is an aggregate over these rows.
+// ---------------------------------------------------------------------------
+
+model Loan {
+  id             String @id @default(cuid())
+  organizationId String
+  clientId       String
+  /// Human-facing sequential code, unique per organization, e.g. "PR-000045".
+  code           String
+
+  // --- Frozen financial configuration -------------------------------------
+
+  /// Principal originally disbursed. Never mutated after creation; a capital
+  /// increase on renewal creates a new Renewal row and updates
+  /// currentPrincipalBase instead of rewriting this.
+  originalPrincipal Decimal @db.Decimal(18, 2)
+
+  /// Principal base that SIMPLE_ON_ORIGINAL_PRINCIPAL charges interest on.
+  /// Equals originalPrincipal until a renewal changes the capital, at which
+  /// point later periods use the new base while closed periods keep theirs.
+  currentPrincipalBase Decimal @db.Decimal(18, 2)
+
+  /// Principal still owed. Reduced only by PRINCIPAL allocations.
+  outstandingPrincipal Decimal @db.Decimal(18, 2)
+
+  /// Rate for ONE period, as a percentage. 20 means 20% per period. The unit is
+  /// always the loan periodicity: 20 with MONTHLY is 20% monthly, never annual.
+  ratePercent Decimal @db.Decimal(9, 4)
+
+  periodicity Periodicity
+  /// Required when periodicity is CUSTOM; the length of one period in days.
+  customPeriodDays Int?
+
+  interestMethod     InterestMethod
+  allocationStrategy AllocationStrategy
+  periodAnchor       PeriodAnchor
+  roundingMode       RoundingMode
+  /// Copied from settings at creation. Changing the organization default later
+  /// never alters what was agreed on this loan; an individual settlement may
+  /// still override it, and the override is recorded on the Settlement row.
+  openPeriodPolicy   OpenPeriodPolicy
+  renewalDueBasis    RenewalDueBasis
+  /// Copied from settings at creation time so rounding is reproducible forever.
+  moneyQuantum       Decimal @db.Decimal(18, 2)
+
+  // --- Schedule -----------------------------------------------------------
+
+  /// Date-only values, stored at UTC midnight and always rendered in the
+  /// organization time zone. A loan has no meaningful time of day.
+  disbursedOn DateTime  @db.Date
+  firstDueOn  DateTime  @db.Date
+  /// Earliest unpaid period due date. Null once the loan is closed.
+  nextDueOn   DateTime? @db.Date
+
+  /// Where the schedule is currently measured from.
+  ///
+  /// A renewal can move the rhythm forward (EFFECTIVE_DATE basis), but period
+  /// indices must stay unique and monotonic for the life of the loan. So the
+  /// anchor is tracked separately from the counter: the period at
+  /// `scheduleAnchorIndex + 1` falls due on `scheduleAnchorOn`, and each later
+  /// one advances from there. On a new loan this is simply firstDueOn at index 0.
+  scheduleAnchorOn    DateTime @db.Date
+  scheduleAnchorIndex Int      @default(0)
+  /// Optional contractual end date. Null means open-ended / revolving.
+  maturityOn  DateTime? @db.Date
+
+  /// Highest period index materialized so far.
+  lastPeriodIndex Int @default(0)
+  /// Timestamp of the last accrual run, for idempotent scheduled accrual.
+  lastAccruedAt   DateTime?
+
+  // --- State --------------------------------------------------------------
+
+  lifecycle  LoanLifecycle    @default(ACTIVE)
+  compliance ComplianceStatus @default(CURRENT)
+  /// Cached day count for sorting and aging. Recomputed by the accrual job,
+  /// never trusted as the source of truth for money.
+  daysOverdue Int             @default(0)
+
+  renewalCount Int @default(0)
+
+  closedOn DateTime? @db.Date
+  notes    String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  archivedAt  DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  client       Client       @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  createdBy    User?        @relation("LoanCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  periods       LoanPeriod[]
+  payments      Payment[]
+  renewals      Renewal[]
+  settlement    Settlement?
+  cashMovements CashMovement[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, lifecycle, compliance])
+  @@index([organizationId, nextDueOn])
+  @@index([organizationId, clientId])
+  @@map("loans")
+}
+
+/// One accrual period of one loan. Immutable in its financial inputs.
+model LoanPeriod {
+  id             String @id @default(cuid())
+  organizationId String
+  loanId         String
+
+  /// 1-based, contiguous, never reused.
+  periodIndex Int
+
+  startsOn DateTime @db.Date
+  dueOn    DateTime @db.Date
+
+  /// The exact principal the interest for THIS period was computed on. Frozen
+  /// at accrual. This is what makes "never recalculate the past" enforceable
+  /// rather than aspirational.
+  principalBasis Decimal @db.Decimal(18, 2)
+  /// The exact rate applied to THIS period, frozen at accrual.
+  rateApplied    Decimal @db.Decimal(9, 4)
+
+  /// principalBasis * rateApplied / 100, rounded by the loan rounding rule.
+  interestAccrued Decimal @db.Decimal(18, 2)
+  /// Sum of INTEREST allocations pointing at this period.
+  interestPaid    Decimal @db.Decimal(18, 2) @default(0)
+  /// Interest closed administratively rather than collected.
+  interestWaived  Decimal @db.Decimal(18, 2) @default(0)
+
+  status LoanPeriodStatus @default(SCHEDULED)
+
+  /// When interest for this period became a real obligation. Null while the
+  /// period is only SCHEDULED.
+  accruedAt DateTime?
+  /// When the period reached PAID.
+  settledAt DateTime?
+
+  /// Set when the period was closed as part of a renewal.
+  closedByRenewalId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  loan         Loan         @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  renewal      Renewal?     @relation(fields: [closedByRenewalId], references: [id], onDelete: SetNull)
+
+  allocations PaymentAllocation[]
+
+  @@unique([loanId, periodIndex])
+  @@index([organizationId, dueOn, status])
+  @@index([organizationId, status])
+  @@index([loanId, status])
+  @@map("loan_periods")
+}
+
+/// A renewal closes the current period and opens the next one, optionally
+/// changing the capital. The previous loan row is never replaced or deleted; the
+/// renewal is the historical link (points 13 and 14).
+model Renewal {
+  id             String @id @default(cuid())
+  organizationId String
+  loanId         String
+
+  /// 1-based renewal counter for this loan.
+  sequence Int
+
+  effectiveOn DateTime @db.Date
+
+  /// Principal base before the renewal.
+  previousPrincipalBase Decimal @db.Decimal(18, 2)
+  /// Principal base after the renewal.
+  newPrincipalBase      Decimal @db.Decimal(18, 2)
+  /// Extra cash handed to the client as part of the renewal. Leaves the till.
+  additionalDisbursed   Decimal @db.Decimal(18, 2) @default(0)
+  /// Principal collected as part of the renewal. Enters the till.
+  principalCollected    Decimal @db.Decimal(18, 2) @default(0)
+  /// Interest collected to close the outgoing period. Enters the till.
+  interestCollected     Decimal @db.Decimal(18, 2) @default(0)
+
+  /// Due date of the newly opened period, and the basis it was measured from.
+  /// Recorded per renewal so a schedule can always be explained after the fact.
+  newDueOn        DateTime        @db.Date
+  dueBasisApplied RenewalDueBasis
+
+  /// Interest that was owed on the closed periods but not collected. Non-zero
+  /// only when a partial renewal was explicitly authorized.
+  interestCarried Decimal @db.Decimal(18, 2) @default(0)
+
+  /// Payment that carried the money for this renewal, when there was one.
+  paymentId String? @unique
+
+  notes       String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  /// Set when the renewal was reversed; the row itself is kept.
+  reversedAt DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  loan         Loan         @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  payment      Payment?     @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  closedPeriods LoanPeriod[]
+  cashMovements CashMovement[]
+
+  @@unique([loanId, sequence])
+  @@index([organizationId, effectiveOn])
+  @@map("renewals")
+}
+
+/// Terminal closure of a loan (point 16).
+model Settlement {
+  id             String @id @default(cuid())
+  organizationId String
+  loanId         String @unique
+
+  kind        SettlementKind
+  settledOn   DateTime       @db.Date
+
+  /// The policy actually applied to the period in progress, and the resulting
+  /// charge. Recorded even when it matched the loan default, so a quote can
+  /// always be reconstructed exactly as the client was shown it.
+  openPeriodPolicyApplied OpenPeriodPolicy
+  openPeriodCharge        Decimal          @db.Decimal(18, 2) @default(0)
+
+  /// Balances at the moment of settlement, kept for the record.
+  principalOutstandingAtSettlement Decimal @db.Decimal(18, 2)
+  interestOutstandingAtSettlement  Decimal @db.Decimal(18, 2)
+  principalCollected               Decimal @db.Decimal(18, 2) @default(0)
+  interestCollected                Decimal @db.Decimal(18, 2) @default(0)
+  /// Amount closed without being collected, only for WRITE_OFF.
+  amountWrittenOff                 Decimal @db.Decimal(18, 2) @default(0)
+
+  reason      String?
+  createdById String?
+  createdAt   DateTime @default(now())
+  reversedAt  DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  loan         Loan         @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, settledOn])
+  @@map("settlements")
+}

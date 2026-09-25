@@ -1,0 +1,64 @@
+# Capital Control — one deployment, one business.
+#
+# Each customer runs their own stack with their own database and their own
+# volume. The schema is multi-tenant, but the deployment is not shared: two
+# lenders never touch the same PostgreSQL instance.
+#
+#   1. cp .env.example .env   and fill in real values
+#   2. docker compose up -d
+#   3. docker compose exec app npm run db:deploy
+#   4. docker compose exec app npm run db:seed
+#
+# The app listens on ${APP_PORT:-3000}. Put a reverse proxy with TLS in front
+# of it before exposing it to the internet: session cookies are Secure.
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-capital}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-capital_control}
+      # Colombian collation, so ORDER BY puts "Ñuñez" where a person expects it.
+      POSTGRES_INITDB_ARGS: "--locale-provider=icu --icu-locale=es-CO --encoding=UTF8"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      # Backups land here; see docs/BACKUP.md.
+      - ./backups:/backups
+    healthcheck:
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-capital} -d ${POSTGRES_DB:-capital_control}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # Not published by default: only the app needs to reach the database.
+    expose:
+      - "5432"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-capital}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-capital_control}?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env}
+      AUTH_URL: ${AUTH_URL:-http://localhost:3000}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@capitalcontrol.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Administrador}
+      SEED_ORG_NAME: ${SEED_ORG_NAME:-Mi Negocio}
+      SEED_ORG_SLUG: ${SEED_ORG_SLUG:-mi-negocio}
+      # Demo data is never loaded into a real deployment.
+      SEED_DEMO_DATA: "false"
+      TZ: ${TZ:-America/Bogota}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+
+volumes:
+  db-data:

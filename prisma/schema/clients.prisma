@@ -1,0 +1,82 @@
+// ---------------------------------------------------------------------------
+// Clients.
+//
+// A client who has ever moved money is never hard-deleted (point 7). archivedAt
+// is the only deletion mechanism, and the application layer refuses to archive a
+// client that still has an outstanding balance.
+// ---------------------------------------------------------------------------
+
+model Client {
+  id             String @id @default(cuid())
+  organizationId String
+  /// Human-facing sequential code, unique per organization, e.g. "CL-000012".
+  code           String
+
+  fullName       String
+  documentType   String?
+  documentNumber String?
+  phone          String?
+  whatsappPhone  String?
+  email          String?
+  address        String?
+  city           String?
+
+  referenceName  String?
+  referencePhone String?
+
+  notes    String?
+  photoUrl String?
+
+  status ClientStatus @default(ACTIVE)
+
+  /// Prepared for the collector role. Null means unassigned.
+  assignedCollectorId String?
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  archivedAt DateTime?
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignedCollector User?        @relation("ClientAssignedCollector", fields: [assignedCollectorId], references: [id], onDelete: SetNull)
+
+  loans         Loan[]
+  payments      Payment[]
+  cashMovements CashMovement[]
+  tagLinks      ClientTagLink[]
+
+  @@unique([organizationId, code])
+  @@unique([organizationId, documentNumber])
+  @@index([organizationId, status])
+  @@index([organizationId, fullName])
+  @@index([organizationId, phone])
+  @@map("clients")
+}
+
+/// Admin-definable client labels (point 88).
+model ClientTag {
+  id             String    @id @default(cuid())
+  organizationId String
+  name           String
+  /// Tailwind-friendly token, resolved to a class in the UI. Never raw CSS.
+  colorToken     String    @default("slate")
+  archivedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clientLinks  ClientTagLink[]
+
+  @@unique([organizationId, name])
+  @@map("client_tags")
+}
+
+model ClientTagLink {
+  clientId String
+  tagId    String
+
+  client Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  tag    ClientTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([clientId, tagId])
+  @@index([tagId])
+  @@map("client_tag_links")
+}

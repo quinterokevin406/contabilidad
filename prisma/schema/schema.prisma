@@ -1,0 +1,16 @@
+// CAPITAL CONTROL — datasource and generator.
+//
+// Multi-file schema: each domain lives in its own file inside prisma/schema/.
+//
+// Prisma 7 no longer accepts a connection URL here. The URL for migrations is
+// declared in prisma7.config.ts, and the runtime client receives an explicit
+// pg driver adapter (see src/infra/db/client.ts).
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}

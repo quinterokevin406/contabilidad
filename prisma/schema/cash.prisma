@@ -1,0 +1,262 @@
+// ---------------------------------------------------------------------------
+// Cash, profit and loss, and equity.
+//
+// The till and the profit are two different questions and this file keeps them
+// apart (points 24, 26, 27, 58). Cash tells you what is in the drawer. The
+// FinancialClass on every movement and category tells you what it MEANS:
+//
+//   PRINCIPAL            -> balance sheet only. Recovering capital is not profit.
+//   INTEREST             -> operating revenue.
+//   OPERATING_INCOME     -> operating revenue.
+//   OPERATING_EXPENSE    -> reduces net profit.
+//   EQUITY_CONTRIBUTION  -> owner money in. Not revenue.
+//   EQUITY_WITHDRAWAL    -> owner money out. Not an expense.
+//   TRANSFER             -> nets to zero.
+//
+// An admin can invent any category name (point 88), but the category must
+// declare one of these classes, and every report sums by class. That is the
+// structural reason principal recovery can never leak into profit.
+// ---------------------------------------------------------------------------
+
+/// A till or bank account. One per organization today; the model already
+/// supports several for the multi-till growth path in point 61.
+model CashAccount {
+  id             String @id @default(cuid())
+  organizationId String
+  name           String
+  /// Balance the account started life with.
+  openingBalance Decimal @db.Decimal(18, 2) @default(0)
+  /// Date the opening balance refers to.
+  openedOn       DateTime @db.Date
+  isDefault      Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  archivedAt     DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  movements CashMovement[]
+  closures  CashClosure[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive])
+  @@map("cash_accounts")
+}
+
+/// Every peso that enters or leaves a till. This table alone determines the
+/// expected cash balance; it is never derived from loan state.
+model CashMovement {
+  id             String @id @default(cuid())
+  organizationId String
+  cashAccountId  String
+
+  type      CashMovementType
+  direction CashDirection
+  /// Always positive. The sign lives in `direction`, so a stray negative can
+  /// never silently invert a total.
+  amount    Decimal          @db.Decimal(18, 2)
+  /// Accounting meaning, denormalized from the type or the category so that
+  /// every report can group by class with a single index.
+  financialClass FinancialClass
+
+  /// Whether this movement actually moves money in or out of the till.
+  ///
+  /// Almost always true. It is false for a bad-debt write-off: closing an
+  /// uncollectable loan is a real loss and belongs in the result, but the cash
+  /// left the drawer back when the loan was disbursed, so counting it again
+  /// would understate the till by the written-off amount. The till sums only
+  /// rows where this is true; the profit and loss statement sums them all.
+  affectsCash Boolean @default(true)
+
+  /// Business date in the organization time zone.
+  occurredOn DateTime @db.Date
+  /// Exact posting instant.
+  postedAt   DateTime @default(now())
+
+  // Optional links back to whatever produced this movement.
+  loanId        String?
+  clientId      String?
+  paymentId     String?
+  renewalId     String?
+  expenseId     String?
+  incomeId      String?
+  capitalEventId String?
+
+  /// Set when this movement is itself the reversal of another one.
+  reversesMovementId String? @unique
+  reversedAt         DateTime?
+
+  note        String?
+  createdById String?
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  cashAccount  CashAccount   @relation(fields: [cashAccountId], references: [id], onDelete: Restrict)
+  loan         Loan?         @relation(fields: [loanId], references: [id], onDelete: SetNull)
+  client       Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  payment      Payment?      @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  renewal      Renewal?      @relation(fields: [renewalId], references: [id], onDelete: SetNull)
+  expense      ExpenseEntry? @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+  income       IncomeEntry?  @relation(fields: [incomeId], references: [id], onDelete: SetNull)
+  capitalEvent CapitalEvent? @relation(fields: [capitalEventId], references: [id], onDelete: SetNull)
+  createdBy    User?         @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  reverses CashMovement? @relation("CashMovementReversal", fields: [reversesMovementId], references: [id], onDelete: SetNull)
+  reversedBy CashMovement? @relation("CashMovementReversal")
+
+  @@index([organizationId, occurredOn])
+  @@index([organizationId, financialClass, occurredOn])
+  @@index([organizationId, type, occurredOn])
+  @@index([cashAccountId, occurredOn])
+  @@map("cash_movements")
+}
+
+/// Admin-definable income and expense categories, unified in one table because
+/// they differ only by their financial class (points 74, 75, 88).
+model TransactionCategory {
+  id             String @id @default(cuid())
+  organizationId String
+  name           String
+
+  /// Constrained by the service layer to OPERATING_INCOME or OPERATING_EXPENSE.
+  /// The protected classes (PRINCIPAL, INTEREST, EQUITY_*) are reserved for
+  /// system-generated movements and are not selectable here.
+  financialClass FinancialClass
+
+  /// Stable key for seeded categories, so a rename never breaks a report.
+  systemKey String?
+  /// System categories cannot be deleted or have their class changed.
+  isSystem  Boolean @default(false)
+
+  sortOrder  Int       @default(0)
+  isActive   Boolean   @default(true)
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  incomeEntries  IncomeEntry[]
+  expenseEntries ExpenseEntry[]
+
+  @@unique([organizationId, name, financialClass])
+  @@index([organizationId, financialClass, isActive])
+  @@map("transaction_categories")
+}
+
+/// Non-loan operating income (point 26). Interest never arrives through here; it
+/// is derived from PaymentAllocation so it cannot be reclassified by hand.
+model IncomeEntry {
+  id             String @id @default(cuid())
+  organizationId String
+  categoryId     String
+
+  amount     Decimal  @db.Decimal(18, 2)
+  occurredOn DateTime @db.Date
+  concept    String
+  notes      String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  reversedAt  DateTime?
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  category     TransactionCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  createdBy    User?               @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  cashMovements CashMovement[]
+
+  @@index([organizationId, occurredOn])
+  @@index([categoryId, occurredOn])
+  @@map("income_entries")
+}
+
+model ExpenseEntry {
+  id             String @id @default(cuid())
+  organizationId String
+  categoryId     String
+
+  amount     Decimal  @db.Decimal(18, 2)
+  occurredOn DateTime @db.Date
+  concept    String
+  notes      String?
+  receiptUrl String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  reversedAt  DateTime?
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  category     TransactionCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  createdBy    User?               @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  cashMovements CashMovement[]
+
+  @@index([organizationId, occurredOn])
+  @@index([categoryId, occurredOn])
+  @@map("expense_entries")
+}
+
+/// Owner capital in and out (point 58 and 80). Deliberately separate from
+/// income and expense so growth from operations is never confused with growth
+/// from fresh owner money.
+model CapitalEvent {
+  id             String @id @default(cuid())
+  organizationId String
+
+  kind       CapitalEventKind
+  amount     Decimal          @db.Decimal(18, 2)
+  occurredOn DateTime         @db.Date
+  concept    String?
+  notes      String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  reversedAt  DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  cashMovements CashMovement[]
+
+  @@index([organizationId, occurredOn])
+  @@index([organizationId, kind, occurredOn])
+  @@map("capital_events")
+}
+
+/// Daily till reconciliation (point 28). Immutable once CLOSED; reopening
+/// requires an elevated permission and leaves an audit trail.
+model CashClosure {
+  id             String @id @default(cuid())
+  organizationId String
+  cashAccountId  String
+
+  /// The business day being closed.
+  closureDate DateTime @db.Date
+
+  openingBalance  Decimal @db.Decimal(18, 2)
+  totalIn         Decimal @db.Decimal(18, 2)
+  totalOut        Decimal @db.Decimal(18, 2)
+  /// openingBalance + totalIn - totalOut
+  expectedBalance Decimal @db.Decimal(18, 2)
+  /// Counted by the operator.
+  countedBalance  Decimal @db.Decimal(18, 2)
+  /// countedBalance - expectedBalance. Negative means the till is short.
+  difference      Decimal @db.Decimal(18, 2)
+
+  notes String?
+
+  closedById String?
+  closedAt   DateTime @default(now())
+
+  /// Set if an administrator reopened this closure.
+  reopenedAt     DateTime?
+  reopenedReason String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  cashAccount  CashAccount  @relation(fields: [cashAccountId], references: [id], onDelete: Restrict)
+  closedBy     User?        @relation(fields: [closedById], references: [id], onDelete: SetNull)
+
+  @@unique([cashAccountId, closureDate])
+  @@index([organizationId, closureDate])
+  @@map("cash_closures")
+}

@@ -1,0 +1,99 @@
+// ---------------------------------------------------------------------------
+// Audit, reversals and notifications (points 33, 34, 36).
+//
+// Nothing financial is ever deleted through the application. A mistake produces
+// a Reversal: the original row is kept and flagged, a compensating set of cash
+// movements is posted, and both sides stay visible in the history forever.
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id             String @id @default(cuid())
+  organizationId String
+
+  action AuditAction
+  /// Logical entity name, e.g. "Loan", "Payment", "CashClosure".
+  entity String
+  /// Primary key of the affected row. Null for entity-less events like LOGIN.
+  entityId String?
+
+  /// Previous and new values for the fields that changed. Money is serialized
+  /// as a decimal string, never as a float.
+  beforeValues Json?
+  afterValues  Json?
+
+  /// Short human summary, e.g. "Payment REC-000123 reversed".
+  summary String?
+  reason  String?
+
+  actorId   String?
+  /// Denormalized so the trail stays readable if a user is archived.
+  actorEmail String?
+  ipAddress  String?
+  userAgent  String?
+
+  createdAt DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor        User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, entity, entityId])
+  @@index([organizationId, action, createdAt])
+  @@map("audit_logs")
+}
+
+/// The record of an annulment. One row per reversed operation.
+model Reversal {
+  id             String @id @default(cuid())
+  organizationId String
+
+  targetType ReversalTargetType
+  targetId   String
+
+  /// Mandatory. A reversal without a stated reason is not accepted.
+  reason String
+
+  /// Snapshot of the reversed row as it stood, so the original is legible even
+  /// if the live row is later archived.
+  originalSnapshot Json
+
+  reversedById String?
+  createdAt    DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  reversedBy   User?        @relation(fields: [reversedById], references: [id], onDelete: SetNull)
+
+  payment Payment?
+
+  @@unique([targetType, targetId])
+  @@index([organizationId, createdAt])
+  @@map("reversals")
+}
+
+/// In-app operational notifications (point 36). Derived state, safe to rebuild.
+model Notification {
+  id             String @id @default(cuid())
+  organizationId String
+
+  kind    NotificationKind
+  title   String
+  body    String?
+  /// Count or amount the notification summarizes, when applicable.
+  quantity Int?
+  amount   Decimal? @db.Decimal(18, 2)
+
+  /// Deep link target inside the app.
+  href String?
+
+  /// Business date the notification refers to, used to avoid duplicates.
+  referenceDate DateTime @db.Date
+
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, kind, referenceDate])
+  @@index([organizationId, readAt])
+  @@map("notifications")
+}

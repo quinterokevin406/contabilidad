@@ -1,36 +1,348 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Capital Control
 
-## Getting Started
+Administration system for a money-lending business: clients, loans, payments,
+partial payments, renewals, settlements, portfolio, cash, income, expenses,
+reports and history.
 
-First, run the development server:
+Not a dashboard template. Every figure it shows is derived from a recorded
+financial movement, inside a transaction, on a real database.
+
+---
+
+## Table of contents
+
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Environment variables](#environment-variables)
+- [Database](#database)
+- [Running it](#running-it)
+- [Production](#production)
+- [Backups](#backups)
+- [Project structure](#project-structure)
+- [The financial rules](#the-financial-rules)
+- [Verification](#verification)
+
+---
+
+## Requirements
+
+| | |
+|---|---|
+| Node.js | 24 or newer |
+| PostgreSQL | 17 or newer |
+| Disk | ~1 GB for the app; the database grows slowly |
+
+PostgreSQL should be created with the `es-CO` ICU locale so that `ORDER BY`
+sorts names the way a Colombian reader expects (`Ñungo` after `Nieto`, not after
+`Zapata`).
+
+---
+
+## Installation
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone <repository-url> capital-control
+cd capital-control
+cp .env.example .env
+npm ci
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`.env` must exist **before** `npm ci`: installing generates the database client,
+and that reads `DATABASE_URL`. The template ships with a working placeholder, so
+the install succeeds before you have a real database.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Then edit `.env` — see the next section — and continue with
+[Database](#database).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### With Docker
 
-## Learn More
+If you would rather not install PostgreSQL by hand:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+cp .env.example .env          # set POSTGRES_PASSWORD and AUTH_SECRET
+docker compose up -d
+docker compose exec app npm run db:deploy
+docker compose exec app npm run db:seed
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+The app is then on `http://localhost:3000`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+One deployment serves one business. The schema is multi-tenant — every table
+carries an `organizationId` — but two customers never share a database.
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Environment variables
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Copy `.env.example` to `.env`. Never commit `.env`.
+
+| Variable | Required | What it is |
+|---|:---:|---|
+| `DATABASE_URL` | yes | PostgreSQL connection string |
+| `AUTH_SECRET` | yes | Signs session cookies. **Generate a fresh one per deployment** |
+| `AUTH_URL` | yes | Public base URL, e.g. `https://prestamos.minegocio.co` |
+| `SEED_ADMIN_EMAIL` | first run | Login for the bootstrap administrator |
+| `SEED_ADMIN_PASSWORD` | first run | Its password. Change it after the first login |
+| `SEED_ADMIN_NAME` | no | Display name |
+| `SEED_ORG_NAME` | first run | Business name shown in the interface |
+| `SEED_ORG_SLUG` | first run | Internal identifier, lowercase, no spaces |
+| `SEED_DEMO_DATA` | no | `true` loads example clients and loans. **Never in production** |
+
+Generate a secret:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+`AUTH_SECRET` is the key to every open session. If it leaks, replace it — every
+user simply logs in again.
+
+---
+
+## Database
+
+### Creating it
+
+```sql
+CREATE DATABASE capital_control
+  WITH ENCODING 'UTF8'
+       LOCALE_PROVIDER icu
+       ICU_LOCALE 'es-CO'
+       TEMPLATE template0;
+```
+
+### Migrations
+
+The schema is versioned in `prisma/migrations/`. Apply it:
+
+```bash
+npm run db:deploy      # production: applies pending migrations only
+npm run db:migrate     # development: creates a new migration from schema changes
+```
+
+### Seed
+
+```bash
+npm run db:seed
+```
+
+Creates the organization, the administrator, the default expense and income
+categories, the payment methods and the cash account. It is idempotent: running
+it twice does not duplicate anything.
+
+With `SEED_DEMO_DATA=true` it also loads ten clients with a year of loan and
+payment history — useful to see the system populated before committing to it.
+
+### Other commands
+
+```bash
+npm run db:studio      # browse the data
+npm run db:generate    # regenerate the Prisma client after editing the schema
+npm run db:reset       # DROPS EVERYTHING and reseeds. Development only
+```
+
+---
+
+## Running it
+
+```bash
+npm run dev            # http://localhost:3000
+```
+
+Sign in with `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`.
+
+After five failed attempts an account locks for fifteen minutes. That is
+deliberate and it is recorded in the audit log.
+
+### Portable PostgreSQL (Windows, no administrator rights)
+
+If you cannot install PostgreSQL as a service:
+
+```bash
+npm run db:start       # starts the portable cluster
+npm run db:status
+npm run db:psql
+npm run db:stop
+```
+
+It looks for the cluster next to the repository, or wherever `PGSQL_HOME`
+points.
+
+---
+
+## Production
+
+```bash
+npm run build
+npm start
+```
+
+Before exposing it to the internet:
+
+1. **Serve it over HTTPS.** Session cookies are `Secure`; without TLS nobody can
+   log in.
+2. **Set a real `AUTH_URL`.**
+3. **Set `SEED_DEMO_DATA=false`.**
+4. **Change the seeded administrator password.**
+5. **Schedule the backups** — see [`docs/BACKUP.md`](docs/BACKUP.md).
+
+The app is installable as a PWA: on a phone, "Add to home screen" gives the
+collector a full-screen app with no address bar.
+
+Offline, it shows a page that says there is no connection and **no figures at
+all**. A cached balance is a wrong balance, and a payment taken against one
+corrupts the ledger.
+
+---
+
+## Backups
+
+```bash
+npm run backup                                    # create
+npm run backup:list                               # list
+npm run backup:restore -- <file>.dump --force     # restore (replaces everything)
+```
+
+Read [`docs/BACKUP.md`](docs/BACKUP.md) before you need it. The short version:
+a backup that lives only on the machine running the system is not a backup.
+
+---
+
+## Project structure
+
+```
+src/
+  core/         Financial engine. No framework, no database, no I/O.
+    money/      Money value object over decimal.js. Refuses floats.
+    time/       CalendarDate: a business date, never a timestamp.
+    loans/      Interest, accrual, state, renewal, settlement.
+    payments/   Allocation of a payment across its destinations.
+    cash/       Ledger projection, operating result, equity.
+    metrics/    Ratios and growth indicators.
+
+  services/     Use cases. Each takes a transaction and writes rows.
+  server/       Server-only queries and Server Actions, per module.
+  app/          Routes (App Router). One folder per screen.
+  components/   Shared interface pieces.
+  infra/db/     Prisma client and the Decimal ↔ Money boundary.
+
+prisma/schema/  34 tables, 32 enums, zero float columns.
+scripts/        Integration verification, backups, local database.
+docs/           Backup, restore and migration.
+```
+
+The dependency direction never inverts: `core` knows nothing about Prisma or
+Next.js, which is why its 257 tests run in under four seconds and why the
+financial rules can be read without a database in front of you.
+
+---
+
+## The financial rules
+
+These are decisions, not implementation details. Anyone operating or selling
+this system should know them.
+
+### Money is never a float
+
+Every amount is `NUMERIC(18,2)` in the database and a `Money` object backed by
+`decimal.js` in the code. `Money` refuses a JavaScript `number` at both the type
+level and at runtime. It never rounds implicitly: rounding is an explicit
+operation with a stated mode.
+
+`0.1 + 0.2 !== 0.3` is a curiosity in a tutorial and a lawsuit in a loan book.
+
+### Recovered capital is not profit
+
+When a client pays $300,000 and $200,000 of it is interest and $100,000 is
+principal, the business earned $200,000 and got $100,000 of its own money back.
+Each half is written as a separate cash movement with a different financial
+class, and the profit report reads only the classes that are actually income.
+
+This is enforced structurally: `FinancialClass` is an enum, and a movement of
+class `PRINCIPAL` cannot be counted as income anywhere in the system.
+
+### Interest accrues when a period falls due, never before
+
+A period materializes exactly when today reaches its due date. Projections of
+future interest are computed on demand and **never written**, so the books never
+contain a charge that has not yet occurred.
+
+### Changing the configuration never rewrites the past
+
+Each loan freezes its rules — rate, method, periodicity, allocation strategy,
+rounding — at the moment it is created. Each period freezes the principal basis
+and rate it was computed with. Changing a default in Settings affects the *next*
+loan, and no existing balance moves.
+
+### Nothing financial is deleted
+
+A mistake is corrected with a **reversal**: the original entry stays, flagged,
+and a compensating entry undoes its effect. Both sides remain visible in
+`/historial` forever. Reversals require a written reason, cannot be applied
+twice, and are restricted to administrators.
+
+### A loan's state is two facts, not one
+
+`lifecycle` (active / paid / cancelled) and `compliance` (up to date / due soon
+/ overdue) are separate columns. That is what makes "overdue and still active"
+and "settled while it was overdue" both expressible without inventing a state
+that means two things.
+
+A loan becomes `PAID` at exactly zero — never at "close enough".
+
+### Every balance is derived, never cached
+
+Outstanding principal, pending interest, portfolio, cash and profit are computed
+from the recorded movements each time they are asked for. A past date can be
+reconstructed from the ledger alone:
+
+```
+principalOutstanding(D) = Σ(principal out) − Σ(principal in) − Σ(write-offs)
+```
+
+This is checked by `npm run verify` against the live balances.
+
+### Rates are configurable, and the system does not judge them
+
+The system never assumes an entered rate is legal or illegal. It stores what you
+tell it and shows it transparently, stating the period it refers to.
+
+Optionally, you can set a threshold in Settings above which the interface shows
+an administrative reminder to review the rate. It is **a visual note and nothing
+else**: it does not modify any contract, does not alter any balance, and does not
+consult any external source.
+
+### The clock is the business's, not the server's
+
+"Today" is resolved in the organization's configured time zone. A collection due
+on the 24th is due on the 24th in Bogotá regardless of where the server sits.
+
+---
+
+## Verification
+
+```bash
+npm test          # 257 unit tests of the financial engine
+npm run typecheck
+npm run verify    # everything above, plus eight integration checks
+```
+
+The integration scripts post real payments, renewals, settlements and reversals
+against the real database and then **roll every transaction back**. They exist to
+prove the wiring — that allocations are written, periods updated, cash moved with
+the right classes, state refreshed and audit entries recorded — and they leave
+nothing behind.
+
+```
+verify:ledger        balances reconcile against the ledger
+verify:payments      allocation, cash classes, idempotency
+verify:lifecycle     renewals and settlements
+verify:cash          closures, discrepancies, equity identity
+verify:collections   today's collections and the calendar
+verify:analytics     snapshots and indicators
+verify:reports       the 11 reports and their exports
+verify:reversals     a reversal restores exactly what the payment moved
+```
+
+Run `npm run verify` after restoring a backup, after upgrading, and before
+handing the system to a customer.
