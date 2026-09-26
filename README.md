@@ -138,7 +138,7 @@ payment history — useful to see the system populated before committing to it.
 ```bash
 npm run db:studio      # browse the data
 npm run db:generate    # regenerate the Prisma client after editing the schema
-npm run db:reset       # DROPS EVERYTHING and reseeds. Development only
+npm run db:reset       # DROPS EVERYTHING, re-migrates and reseeds. Development only
 ```
 
 ---

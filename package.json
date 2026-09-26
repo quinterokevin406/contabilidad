@@ -13,7 +13,7 @@
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
-    "db:reset": "prisma migrate reset",
+    "db:reset": "prisma migrate reset && npm run db:seed",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
