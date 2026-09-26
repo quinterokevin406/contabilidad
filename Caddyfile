@@ -1,0 +1,20 @@
+# TLS terminates here. Caddy obtains a Let's Encrypt certificate for APP_DOMAIN
+# on first start and renews it on its own — there is no cron job to forget.
+#
+# APP_DOMAIN=localhost also works: Caddy issues a local certificate instead,
+# which is enough to test the whole stack before a domain exists.
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	# The application is private financial software. Keep it out of every index
+	# and out of every referrer header.
+	header {
+		Referrer-Policy "same-origin"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	reverse_proxy app:3000
+}

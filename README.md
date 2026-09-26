@@ -186,6 +186,9 @@ Before exposing it to the internet:
 4. **Change the seeded administrator password.**
 5. **Schedule the backups** — see [`docs/BACKUP.md`](docs/BACKUP.md).
 
+For a step-by-step VPS deployment with automatic TLS, see
+[`docs/DEPLOY.md`](docs/DEPLOY.md).
+
 The app is installable as a PWA: on a phone, "Add to home screen" gives the
 collector a full-screen app with no address bar.
 
