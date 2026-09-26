@@ -57,6 +57,13 @@ model User {
   passwordHash   String
   role           UserRole   @default(ADMIN)
   status         UserStatus @default(ACTIVE)
+  /// Operator of the platform itself, not of a lending business.
+  ///
+  /// ADMIN is the role every customer's own administrator holds, so it cannot
+  /// gate anything that crosses tenants. This flag can only be granted from the
+  /// server (scripts/grant-platform-owner.mjs) — never through the interface —
+  /// so no request can escalate into it.
+  isPlatformOwner Boolean   @default(false)
   /// Bumped to invalidate every issued token for this user at once.
   sessionVersion Int        @default(1)
   lastLoginAt    DateTime?

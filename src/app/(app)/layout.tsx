@@ -21,7 +21,12 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
 
   return (
     <AppShell
-      user={{ name: user.name, email: user.email, role: user.role }}
+      user={{
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isPlatformOwner: user.isPlatformOwner,
+      }}
       organizationName={organization?.name ?? "Capital Control"}
       onLogout={logout}
     >

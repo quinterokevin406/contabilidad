@@ -38,6 +38,13 @@ export interface NavItem {
    * cover without being sent into a dead end.
    */
   pending?: boolean;
+  /**
+   * Only for whoever operates the platform itself.
+   *
+   * Not a role: every customer's own administrator holds ADMIN, so no role
+   * could ever gate something that crosses organizations.
+   */
+  platformOnly?: boolean;
 }
 
 export interface NavSection {
@@ -82,12 +89,16 @@ export const NAVIGATION: readonly NavSection[] = [
 ];
 
 /** Filters the navigation to what a role may see. */
-export function navigationFor(role: UserRole): NavSection[] {
+export function navigationFor(
+  role: UserRole,
+  isPlatformOwner = false,
+): NavSection[] {
   return NAVIGATION.map((section) => ({
     label: section.label,
-    items: section.items.filter(
-      (item) => !item.roles || item.roles.includes(role),
-    ),
+    items: section.items.filter((item) => {
+      if (item.platformOnly && !isPlatformOwner) return false;
+      return !item.roles || item.roles.includes(role);
+    }),
   })).filter((section) => section.items.length > 0);
 }
 

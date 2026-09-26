@@ -315,6 +315,37 @@ connection next.
 queries with **no filter at all** — raw SQL and lookups by exact id included —
 against a second organization's data, and every one comes back empty.
 
+### The platform operator is not an administrator
+
+`ADMIN` is the role every customer's own administrator holds, so it can never
+gate anything that crosses organizations. Operating the platform — seeing which
+businesses exist, suspending one that has not paid — is a separate flag that
+**cannot be granted from the interface at all**:
+
+```bash
+npm run platform:owner -- --list
+npm run platform:owner -- vos@tunegocio.co
+npm run platform:owner -- vos@tunegocio.co --revoke
+```
+
+Shell access to the server is the only way to obtain it. Whoever sells the
+software has that; their customers do not. If a screen could grant it, a stolen
+administrator session would be one click from becoming a stolen everything.
+
+That screen is deliberately starved: names, status, dates and counts. No
+balance, no client, no peso. `verify:platform` asserts it — it inspects the
+fields the query actually returns and fails if any of them looks like an
+amount.
+
+**Suspension is a lock, never a deletion.** Every client, loan, payment and
+movement stays exactly where it is, and reactivating restores the business
+untouched. The check counts every financial row before and after and refuses a
+suspension that changed any of them. A lender who lost their records over a
+late subscription would be entitled to sue, and would be right.
+
+The reason is recorded in the customer's own history, where they can read it
+and argue with it.
+
 ### Every balance is derived, never cached
 
 Outstanding principal, pending interest, portfolio, cash and profit are computed
@@ -350,7 +381,7 @@ on the 24th is due on the 24th in Bogotá regardless of where the server sits.
 npm run db:test   # builds a throwaway database seeded with demo data
 npm test          # 257 unit tests of the financial engine
 npm run typecheck
-npm run verify    # everything above, plus nine integration checks
+npm run verify    # everything above, plus ten integration checks
 ```
 
 `db:test` is a prerequisite and only has to be run once. The integration checks

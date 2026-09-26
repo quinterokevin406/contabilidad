@@ -21,7 +21,12 @@ import { isActivePath, navigationFor } from "./navigation";
 const COLLAPSE_KEY = "cc.sidebar.collapsed";
 
 export interface AppShellProps {
-  user: { name: string; email: string; role: UserRole };
+  user: {
+    name: string;
+    email: string;
+    role: UserRole;
+    isPlatformOwner?: boolean;
+  };
   organizationName: string;
   onLogout: () => void;
   children: ReactNode;
@@ -37,7 +42,7 @@ export function AppShell({
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const sections = navigationFor(user.role);
+  const sections = navigationFor(user.role, user.isPlatformOwner ?? false);
 
   // Restore the collapse preference. localStorage is right for a per-device UI
   // preference and wrong for anything financial, which all lives server-side.

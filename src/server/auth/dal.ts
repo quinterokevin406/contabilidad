@@ -29,6 +29,13 @@ export interface CurrentUser {
   email: string;
   name: string;
   role: UserRole;
+  /**
+   * Operates the platform rather than a lending business.
+   *
+   * Read from the database on every request like everything else here, so
+   * revoking it takes effect on the next click.
+   */
+  isPlatformOwner: boolean;
 }
 
 /**
@@ -62,6 +69,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
         role: true,
         status: true,
         sessionVersion: true,
+        isPlatformOwner: true,
         organization: { select: { status: true } },
       },
     }),
@@ -83,6 +91,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
     email: user.email,
     name: user.name,
     role: user.role,
+    isPlatformOwner: user.isPlatformOwner,
   };
 });
 
@@ -141,3 +150,19 @@ export const getOrganizationSettings = cache(async () => {
 
   return settings;
 });
+
+/**
+ * Requires the operator of the platform itself.
+ *
+ * Deliberately NOT the ADMIN role: every customer's own administrator holds
+ * that, so it cannot gate anything that crosses organizations. The flag is
+ * granted from the server only (scripts/grant-platform-owner.mjs), which is
+ * what makes it impossible to escalate into through the interface.
+ */
+export async function requirePlatformOwner(): Promise<CurrentUser> {
+  const user = await requireUser();
+  if (!user.isPlatformOwner) {
+    throw new Error("Esta sección es de la operación de la plataforma.");
+  }
+  return user;
+}
