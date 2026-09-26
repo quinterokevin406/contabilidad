@@ -49,6 +49,24 @@ The dump is PostgreSQL's custom format (`pg_dump -Fc`), not plain SQL. It is
 compressed, and it can be restored selectively — one table at a time — if a
 partial recovery is ever needed. A `.sql` file cannot do that.
 
+### Why this is not a plain `pg_dump`
+
+Every tenant table enforces Row-Level Security against the table owner too, so
+a bare `pg_dump` refuses to run at all. The flag that makes it run,
+`--enable-row-security`, has a far nastier property: with no tenant context it
+**exits successfully and writes a file containing zero rows**. Measured on a
+live database — ten clients with the context, none without, same exit code,
+same reassuring output.
+
+So the script declares the context, and then refuses to trust the result until
+it has checked it: it reads the client count from the database before dumping
+and counts what actually landed in the file afterwards. A mismatch, or an
+unreachable `psql`, aborts and writes nothing.
+
+If you ever replace this script with a hand-rolled `pg_dump` line, you will get
+empty backups and no warning. `npm run verify:backup` exists to catch exactly
+that.
+
 ### Inside Docker
 
 ```bash
@@ -88,8 +106,15 @@ A workable routine for a small business:
 node "C:\ruta\capital-control\scripts\backup.mjs" create
 ```
 
-Then delete dumps older than your retention window. Thirty days of daily dumps
-of a business this size is well under a gigabyte.
+Old dumps are deleted automatically: the script keeps the newest thirty and
+removes the rest. Change it with `--keep`:
+
+```bash
+npm run backup -- --keep 90
+```
+
+Safety copies taken before a restore are never pruned — those exist precisely
+because something already went wrong.
 
 ### Verify it, or you do not have one
 

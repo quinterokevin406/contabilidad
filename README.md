@@ -381,7 +381,7 @@ on the 24th is due on the 24th in Bogotá regardless of where the server sits.
 npm run db:test   # builds a throwaway database seeded with demo data
 npm test          # 257 unit tests of the financial engine
 npm run typecheck
-npm run verify    # everything above, plus ten integration checks
+npm run verify    # everything above, plus eleven integration checks
 ```
 
 `db:test` is a prerequisite and only has to be run once. The integration checks
