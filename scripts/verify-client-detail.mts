@@ -7,17 +7,14 @@
  * checks the arithmetic.
  */
 
-import { PrismaPg } from "@prisma/adapter-pg";
-
 import { Money } from "@/core/money/money";
-import { PrismaClient } from "@/generated/prisma";
 import { fromDb } from "@/infra/db/money";
+import { createSystemClient } from "@/infra/db/system-client";
+import { enterOrganizationForProcess } from "@/infra/db/tenancy";
 
 if (!process.env.DATABASE_URL) process.loadEnvFile(".env");
 
-const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
-});
+const prisma = createSystemClient();
 
 let failures = 0;
 
@@ -31,6 +28,10 @@ async function main() {
   const org = await prisma.organization.findFirstOrThrow({
     select: { id: true, name: true },
   });
+
+  // Everything below queries through the application layer, which is scoped
+  // by Row-Level Security like any request would be.
+  enterOrganizationForProcess(org.id);
 
   const { getClientDetail } = await import("@/server/clients/detail");
 

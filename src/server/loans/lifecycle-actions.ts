@@ -11,7 +11,7 @@ import {
   todayIn,
   type CalendarDate,
 } from "@/core/time/calendar-date";
-import { prisma } from "@/infra/db/client";
+import { prisma, tenantTransaction } from "@/infra/db/client";
 import { fromDb } from "@/infra/db/money";
 import { getOrganizationSettings, requireWriteAccess } from "@/server/auth/dal";
 import { accrueLoan } from "@/services/loans/accrue";
@@ -42,13 +42,12 @@ class Preview<T> extends Error {
 }
 
 async function preview<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
-  return prisma
-    .$transaction(
-      async (tx) => {
-        throw new Preview(await fn(tx));
-      },
-      { timeout: 30_000 },
-    )
+  return tenantTransaction(
+    async (tx) => {
+      throw new Preview(await fn(tx));
+    },
+    { timeout: 30_000 },
+  )
     .catch((error: unknown) => {
       if (error instanceof Preview) return error.value as T;
       throw error;
@@ -265,7 +264,7 @@ export async function confirmRenewal(
 
     const effectiveOn = calendarDate(parsed.data.effectiveOn);
 
-    const result = await prisma.$transaction(
+    const result = await tenantTransaction(
       async (tx) =>
         renewLoan(tx, {
           organizationId: user.organizationId,
@@ -416,7 +415,7 @@ export async function confirmSettlement(
 
     const asOf = calendarDate(parsed.data.asOf);
 
-    const result = await prisma.$transaction(
+    const result = await tenantTransaction(
       async (tx) =>
         settleLoan(tx, {
           organizationId: user.organizationId,

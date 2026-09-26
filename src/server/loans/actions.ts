@@ -11,7 +11,7 @@ import {
   todayIn,
   type CalendarDate,
 } from "@/core/time/calendar-date";
-import { prisma } from "@/infra/db/client";
+import { prisma, tenantTransaction } from "@/infra/db/client";
 import { fromDb } from "@/infra/db/money";
 import { getOrganizationSettings, requireWriteAccess } from "@/server/auth/dal";
 import { accrueLoan } from "@/services/loans/accrue";
@@ -121,8 +121,7 @@ export async function previewPayment(
       };
     }
 
-    const breakdown = await prisma
-      .$transaction(async (tx) => {
+    const breakdown = await tenantTransaction(async (tx) => {
         // Accrue so the preview sees exactly the debt the posting will see.
         await accrueLoan(tx, parsed.data.loanId, paidOn);
 
@@ -312,7 +311,7 @@ export async function registerPayment(
       };
     }
 
-    const result = await prisma.$transaction(
+    const result = await tenantTransaction(
       async (tx) => {
         let manual;
 

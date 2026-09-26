@@ -12,9 +12,13 @@ import ExcelJS from "exceljs";
 import { Money } from "@/core/money/money";
 import { addDays, startOfMonth, todayIn } from "@/core/time/calendar-date";
 import { prisma } from "@/infra/db/client";
+import { createSystemClient } from "@/infra/db/system-client";
+import { enterOrganizationForProcess } from "@/infra/db/tenancy";
 import { toCsv, toXlsx } from "@/server/reports/export";
 import { findReport, REPORTS } from "@/server/reports/registry";
 import { fromDb } from "@/infra/db/money";
+
+const system = createSystemClient();
 
 let failures = 0;
 
@@ -24,9 +28,11 @@ function check(label: string, pass: boolean, detail = "") {
 }
 
 async function main() {
-  const org = await prisma.organization.findFirstOrThrow({
+  const org = await system.organization.findFirstOrThrow({
     select: { id: true, name: true },
   });
+
+  enterOrganizationForProcess(org.id);
   const today = todayIn("America/Bogota");
 
   // --- Every report runs and is well-formed --------------------------------

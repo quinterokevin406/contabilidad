@@ -13,10 +13,9 @@
  *              data.
  */
 
-import { PrismaPg } from "@prisma/adapter-pg";
 
 import { todayIn } from "@/core/time/calendar-date";
-import { PrismaClient } from "@/generated/prisma";
+import { createSystemClient } from "@/infra/db/system-client";
 
 import { bootstrap } from "./seed/bootstrap";
 import { seedDemo } from "./seed/demo";
@@ -48,9 +47,9 @@ async function main(): Promise<void> {
     throw new Error("SEED_ADMIN_PASSWORD must be at least 8 characters.");
   }
 
-  const prisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString: databaseUrl }),
-  });
+  // The seed creates the organization itself, so it runs with access across
+  // every tenant. Nothing that serves a request may do this.
+  const prisma = createSystemClient(databaseUrl);
 
   try {
     const timeZone = "America/Bogota";

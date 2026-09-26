@@ -6,6 +6,8 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { prisma } from "@/infra/db/client";
+import { setRequestTenant } from "@/infra/db/request-tenant";
+import { withSystemAccess } from "@/infra/db/tenancy";
 
 import { getCurrentUser } from "./dal";
 import { clearSessionCookie, setSessionCookie, signSession } from "./session";
@@ -58,21 +60,27 @@ export async function login(
 
   const email = parsed.data.email.toLowerCase();
 
-  const user = await prisma.user.findFirst({
-    where: { email, archivedAt: null },
-    select: {
-      id: true,
-      organizationId: true,
-      email: true,
-      passwordHash: true,
-      role: true,
-      status: true,
-      sessionVersion: true,
-      failedAttempts: true,
-      lockedUntil: true,
-      organization: { select: { status: true } },
-    },
-  });
+  // The only query in the application that legitimately crosses tenants: at
+  // this point nobody has proven who they are, and an email address does not
+  // say which organization it belongs to. Everything after the lookup runs
+  // scoped to whatever organization it landed in.
+  const user = await withSystemAccess(() =>
+    prisma.user.findFirst({
+      where: { email, archivedAt: null },
+      select: {
+        id: true,
+        organizationId: true,
+        email: true,
+        passwordHash: true,
+        role: true,
+        status: true,
+        sessionVersion: true,
+        failedAttempts: true,
+        lockedUntil: true,
+        organization: { select: { status: true } },
+      },
+    }),
+  );
 
   // A single generic message for every failure path. Telling an attacker
   // whether the address exists is free reconnaissance.
@@ -87,6 +95,10 @@ export async function login(
     await recordFailedLogin(null, email, ipAddress, userAgent);
     return { error: GENERIC };
   }
+
+  // The organization is known now, so the rest of the sign-in — the failed
+  // attempt counter, the audit entry — is scoped like any other request.
+  setRequestTenant(user.organizationId);
 
   if (user.lockedUntil && user.lockedUntil > new Date()) {
     const minutes = Math.max(

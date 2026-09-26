@@ -7,21 +7,17 @@
  * renewals, and a settlement actually landing the loan on zero.
  */
 
-import { PrismaPg } from "@prisma/adapter-pg";
-
 import { Money } from "@/core/money/money";
 import { todayIn } from "@/core/time/calendar-date";
-import { PrismaClient } from "@/generated/prisma";
 import { fromDb } from "@/infra/db/money";
+import { createSystemClient } from "@/infra/db/system-client";
 import { renewLoan } from "@/services/loans/renew";
 import { quoteLoanSettlement, settleLoan } from "@/services/loans/settle";
 import type { Tx } from "@/services/shared";
 
 if (!process.env.DATABASE_URL) process.loadEnvFile(".env");
 
-const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
-});
+const prisma = createSystemClient();
 
 const SETTINGS = { dueSoonLeadDays: 3, overdueGraceDays: 0 };
 

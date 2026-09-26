@@ -7,13 +7,11 @@
  * balance from the ledger rather than from yesterday's count.
  */
 
-import { PrismaPg } from "@prisma/adapter-pg";
-
 import { computeOperatingResult, projectCashPosition } from "@/core/cash/ledger";
 import { Money } from "@/core/money/money";
 import { addDays, todayIn } from "@/core/time/calendar-date";
-import { PrismaClient } from "@/generated/prisma";
 import { fromDb } from "@/infra/db/money";
+import { createSystemClient } from "@/infra/db/system-client";
 import { performClosure, previewClosure } from "@/services/cash/closure";
 import {
   recordCapitalEvent,
@@ -25,9 +23,7 @@ import type { Tx } from "@/services/shared";
 
 if (!process.env.DATABASE_URL) process.loadEnvFile(".env");
 
-const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
-});
+const prisma = createSystemClient();
 
 let failures = 0;
 

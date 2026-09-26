@@ -7,7 +7,7 @@ import { Money } from "@/core/money/money";
 import { fromPrismaDate, type CalendarDate } from "@/core/time/calendar-date";
 import { formatMonthShort } from "@/core/time/format";
 import type { GoalKind } from "@/generated/prisma";
-import { prisma } from "@/infra/db/client";
+import { prisma, tenantTransaction } from "@/infra/db/client";
 import { fromDb } from "@/infra/db/money";
 import { currentPeriodPreview } from "@/services/analytics/close-period";
 import type { Observation } from "@/services/analytics/metrics";
@@ -252,11 +252,8 @@ export async function getCurrentPeriod(
   observations: Observation[];
   isClosed: boolean;
 }> {
-  const preview = await currentPeriodPreview(
-    prisma,
-    organizationId,
-    "MONTHLY",
-    today,
+  const preview = await tenantTransaction((tx) =>
+    currentPeriodPreview(tx, organizationId, "MONTHLY", today),
   );
   const f = preview.figures;
 

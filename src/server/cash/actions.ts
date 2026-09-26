@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { calendarDate, todayIn } from "@/core/time/calendar-date";
-import { prisma } from "@/infra/db/client";
+import { prisma, tenantTransaction } from "@/infra/db/client";
 import { getOrganizationSettings, requireWriteAccess } from "@/server/auth/dal";
 import {
   recordCapitalEvent,
@@ -85,7 +85,7 @@ export async function createExpense(
     const future = await assertNotFuture(parsed.data.occurredOn);
     if (future) return fail(future);
 
-    await prisma.$transaction((tx) =>
+    await tenantTransaction((tx) =>
       recordExpense(tx, {
         organizationId: user.organizationId,
         categoryId: parsed.data.categoryId,
@@ -119,7 +119,7 @@ export async function createIncome(
     const future = await assertNotFuture(parsed.data.occurredOn);
     if (future) return fail(future);
 
-    await prisma.$transaction((tx) =>
+    await tenantTransaction((tx) =>
       recordIncome(tx, {
         organizationId: user.organizationId,
         categoryId: parsed.data.categoryId,
@@ -163,7 +163,7 @@ export async function createCapitalEvent(
     const future = await assertNotFuture(parsed.data.occurredOn);
     if (future) return fail(future);
 
-    await prisma.$transaction((tx) =>
+    await tenantTransaction((tx) =>
       recordCapitalEvent(tx, {
         organizationId: user.organizationId,
         kind: parsed.data.kind,
@@ -220,11 +220,13 @@ export async function loadClosurePreview(
       return { ok: false, error: "Datos inválidos.", data: null };
     }
 
-    const preview = await previewClosure(
-      prisma,
-      user.organizationId,
-      parsed.data.cashAccountId,
-      calendarDate(parsed.data.closureDate),
+    const preview = await tenantTransaction((tx) =>
+      previewClosure(
+        tx,
+        user.organizationId,
+        parsed.data.cashAccountId,
+        calendarDate(parsed.data.closureDate),
+      ),
     );
 
     return {
@@ -263,7 +265,7 @@ export async function performDailyClosure(
     const future = await assertNotFuture(parsed.data.closureDate);
     if (future) return fail("No se puede cerrar una fecha futura.");
 
-    const result = await prisma.$transaction((tx) =>
+    const result = await tenantTransaction((tx) =>
       performClosure(tx, {
         organizationId: user.organizationId,
         cashAccountId: parsed.data.cashAccountId,
@@ -312,7 +314,7 @@ export async function createTillAdjustment(
     const future = await assertNotFuture(parsed.data.occurredOn);
     if (future) return fail(future);
 
-    await prisma.$transaction((tx) =>
+    await tenantTransaction((tx) =>
       recordTillAdjustment(tx, {
         organizationId: user.organizationId,
         cashAccountId: parsed.data.cashAccountId,

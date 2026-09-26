@@ -20,14 +20,13 @@ import { Money } from "@/core/money/money";
 import { todayIn } from "@/core/time/calendar-date";
 import { PrismaClient } from "@/generated/prisma";
 import { fromDb } from "@/infra/db/money";
+import { createSystemClient } from "@/infra/db/system-client";
 import { postPayment } from "@/services/payments/post-payment";
 import { reversePayment } from "@/services/reversals/reverse-payment";
 
 if (!process.env.DATABASE_URL) process.loadEnvFile(".env");
 
-const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
-});
+const prisma = createSystemClient();
 
 const SETTINGS = { dueSoonLeadDays: 3, overdueGraceDays: 0 };
 

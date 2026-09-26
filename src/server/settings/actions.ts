@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { prisma } from "@/infra/db/client";
+import { prisma, tenantTransaction } from "@/infra/db/client";
 import { requireAdmin } from "@/server/auth/dal";
 
 /**
@@ -86,7 +86,7 @@ export async function saveOrganizationSettings(
 
     const threshold = parsed.data.rateReviewThresholdPercent?.trim();
 
-    await prisma.$transaction(async (tx) => {
+    await tenantTransaction(async (tx) => {
       await tx.organizationSettings.update({
         where: { organizationId: user.organizationId },
         data: {

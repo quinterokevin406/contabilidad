@@ -8,8 +8,6 @@
  * Destroys nothing. Every figure is derived from the ledger.
  */
 
-import { PrismaPg } from "@prisma/adapter-pg";
-
 import {
   addMonths,
   startOfMonth,
@@ -19,12 +17,10 @@ import {
   type CalendarDate,
 } from "@/core/time/calendar-date";
 import { formatMonthShort } from "@/core/time/format";
-import { PrismaClient } from "@/generated/prisma";
 import { closePeriod } from "@/services/analytics/close-period";
+import { createSystemClient } from "@/infra/db/system-client";
 
-const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
-});
+const prisma = createSystemClient();
 
 async function main() {
   const org = await prisma.organization.findFirstOrThrow({

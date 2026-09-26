@@ -223,9 +223,16 @@ can know the numbers are right.
 
 The same steps, with three differences:
 
-1. **Their own server, their own domain, their own `.env`.** Never a shared
-   database — the tenant column exists for data integrity, not as a licence to
-   put two lenders in one box.
+1. **Their own server, their own domain, their own `.env`** — if you are
+   selling the software outright and handing it over. Nothing to operate, and
+   nothing of yours to keep running.
+
+   If instead you run it for them and charge a subscription, several lenders on
+   one deployment is the normal shape, and the schema was built for it: every
+   tenant-scoped table is under Row-Level Security, so the database itself
+   refuses to hand one organization another's rows. Run `npm run verify:tenancy`
+   before you put the second customer on a server, and again after any change to
+   how queries are built.
 2. **Generate fresh secrets for each one.** Reusing an `AUTH_SECRET` across
    deployments means a session token from one works on another.
 3. **Set up their backups before handing it over**, and show them the restore

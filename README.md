@@ -229,7 +229,7 @@ src/
   components/   Shared interface pieces.
   infra/db/     Prisma client and the Decimal ↔ Money boundary.
 
-prisma/schema/  34 tables, 32 enums, zero float columns.
+prisma/schema/  34 tables, 32 enums, zero float columns, 31 under RLS.
 scripts/        Integration verification, backups, local database.
 docs/           Backup, restore and migration.
 ```
@@ -293,6 +293,27 @@ that means two things.
 
 A loan becomes `PAID` at exactly zero — never at "close enough".
 
+### One lender can never see another's data
+
+Every tenant-scoped table carries an `organizationId`, every query filters by
+it — and PostgreSQL enforces it underneath, through Row-Level Security. A
+statement declares which organization it belongs to before it runs, and the
+policies do the rest.
+
+That redundancy is the point. The application's filters are the first line; the
+database is what still holds when one query forgets. A missing filter produces
+an **empty screen** — a bug somebody reports — instead of another lender's
+clients on someone's page.
+
+Absence of context denies rather than permits: a query that never declared a
+tenant returns nothing at all. The declaration is transaction-local, so it
+cannot outlive a request and be inherited by whoever picks up that pooled
+connection next.
+
+`npm run verify:tenancy` proves it. From inside one organization it runs
+queries with **no filter at all** — raw SQL and lookups by exact id included —
+against a second organization's data, and every one comes back empty.
+
 ### Every balance is derived, never cached
 
 Outstanding principal, pending interest, portfolio, cash and profit are computed
@@ -325,10 +346,15 @@ on the 24th is due on the 24th in Bogotá regardless of where the server sits.
 ## Verification
 
 ```bash
+npm run db:test   # builds a throwaway database seeded with demo data
 npm test          # 257 unit tests of the financial engine
 npm run typecheck
-npm run verify    # everything above, plus eight integration checks
+npm run verify    # everything above, plus nine integration checks
 ```
+
+`db:test` is a prerequisite and only has to be run once. The integration checks
+need data to work on, and they get their own database for it — rolling back a
+transaction is not a reason to point them at a live business.
 
 The integration scripts post real payments, renewals, settlements and reversals
 against the real database and then **roll every transaction back**. They exist to
@@ -345,6 +371,7 @@ verify:collections   today's collections and the calendar
 verify:analytics     snapshots and indicators
 verify:reports       the 11 reports and their exports
 verify:reversals     a reversal restores exactly what the payment moved
+verify:tenancy       one organization cannot reach another's rows
 ```
 
 Run `npm run verify` after restoring a backup, after upgrading, and before

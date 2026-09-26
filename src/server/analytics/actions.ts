@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { addDays, calendarDate, startOfMonth, todayIn } from "@/core/time/calendar-date";
-import { prisma } from "@/infra/db/client";
+import { prisma, tenantTransaction } from "@/infra/db/client";
 import { getOrganizationSettings, requireAdmin } from "@/server/auth/dal";
 import { closePeriod } from "@/services/analytics/close-period";
 
@@ -40,7 +40,7 @@ export async function closeMonthlyPeriod(
       return { ok: false, error: "Datos inválidos.", message: null };
     }
 
-    const result = await prisma.$transaction(
+    const result = await tenantTransaction(
       (tx) =>
         closePeriod(tx, {
           organizationId: user.organizationId,

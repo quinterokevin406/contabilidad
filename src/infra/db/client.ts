@@ -1,7 +1,10 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 
-import { PrismaClient } from "@/generated/prisma";
+import { PrismaClient, type Prisma } from "@/generated/prisma";
 import { getEnv } from "@/lib/env";
+
+import { readRequestTenant } from "./request-tenant";
+import { asDeclared, currentTenantSetting } from "./tenancy";
 
 /**
  * The Prisma client.
@@ -16,10 +19,10 @@ import { getEnv } from "@/lib/env";
  */
 
 const globalForPrisma = globalThis as unknown as {
-  prisma?: PrismaClient;
+  prismaBase?: PrismaClient;
 };
 
-function createClient(): PrismaClient {
+function createBaseClient(): PrismaClient {
   const env = getEnv();
 
   const adapter = new PrismaPg({
@@ -40,11 +43,81 @@ function createClient(): PrismaClient {
   });
 }
 
-export const prisma: PrismaClient = globalForPrisma.prisma ?? createClient();
+const base: PrismaClient = globalForPrisma.prismaBase ?? createBaseClient();
 
 if (getEnv().NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
+  globalForPrisma.prismaBase = base;
 }
+
+const DECLARE_TENANT = "SELECT set_config('app.organization_id', $1, true)";
+
+/**
+ * Which tenant the next statement belongs to.
+ *
+ * An explicit scope wins — that is how the seed, the verification scripts and
+ * the pre-authentication lookup declare themselves. Everything else is a normal
+ * request and takes its tenant from the verified session.
+ *
+ * When neither applies the answer is the empty string, which matches no
+ * organization. Absence of context denies.
+ */
+function resolveTenant(): string {
+  return currentTenantSetting() || readRequestTenant();
+}
+
+/** "LoanPeriod" -> "loanPeriod", the property name on the client. */
+function clientProperty(model: string): string {
+  return model.charAt(0).toLowerCase() + model.slice(1);
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function runOn(
+  client: unknown,
+  model: string | undefined,
+  operation: string,
+  args: unknown,
+): Promise<unknown> {
+  const target = client as any;
+  if (model) return target[clientProperty(model)][operation](args);
+  // Raw operations take positional arguments rather than an options object.
+  return target[operation](...(Array.isArray(args) ? args : [args]));
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+/**
+ * Declares the tenant to PostgreSQL before every read.
+ *
+ * The setting has to be transaction-local — a session-wide one would outlive
+ * the request and be inherited by whoever picks up that pooled connection next.
+ * Transaction-local means the operation must run on the connection that
+ * declared it, and Prisma's `query(args)` callback does NOT do that: it takes
+ * its own connection from the pool, so the declaration would land on a
+ * connection that never runs the query. The operation is therefore re-issued
+ * against the transaction client.
+ *
+ * That was verified against a live database rather than assumed. Getting it
+ * wrong produces a security control that silently protects nothing, which is
+ * worse than having none at all.
+ *
+ * The transaction is opened on the UNEXTENDED client, so operations inside it
+ * do not re-enter this extension and there is no recursion.
+ */
+const prismaExtended = base.$extends({
+  query: {
+    async $allOperations({ model, operation, args }) {
+      const setting = resolveTenant();
+
+      return base.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(DECLARE_TENANT, setting);
+        return asDeclared(() => runOn(tx, model, operation, args));
+      });
+    },
+  },
+});
+
+export type TenantAwarePrisma = typeof prismaExtended;
+
+export const prisma: TenantAwarePrisma = prismaExtended;
 
 /**
  * Transaction client type.
@@ -53,7 +126,25 @@ if (getEnv().NODE_ENV !== "production") {
  * client, which makes it impossible to accidentally run half of a financial
  * operation outside the transaction (point 42).
  */
-export type TransactionClient = Omit<
-  PrismaClient,
-  "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends"
->;
+export type TransactionClient = Prisma.TransactionClient;
+
+/**
+ * Opens a transaction with the tenant already declared.
+ *
+ * Use this instead of `prisma.$transaction`. The plain version would leave the
+ * first statement inside it without a declared tenant, and every policy would
+ * deny — the failure is loud, but this is the one place where the context has
+ * to be established by hand because a transaction is not itself an operation
+ * the extension can intercept.
+ */
+export function tenantTransaction<T>(
+  fn: (tx: TransactionClient) => Promise<T>,
+  options?: { timeout?: number; maxWait?: number },
+): Promise<T> {
+  const setting = resolveTenant();
+
+  return base.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(DECLARE_TENANT, setting);
+    return asDeclared(() => fn(tx));
+  }, options);
+}

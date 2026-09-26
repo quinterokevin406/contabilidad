@@ -13,7 +13,7 @@ import {
 } from "@/core/time/calendar-date";
 import { endOfMonth, startOfMonth } from "@/core/time/calendar-date";
 import type { CashMovementType } from "@/generated/prisma";
-import { prisma } from "@/infra/db/client";
+import { prisma, tenantTransaction } from "@/infra/db/client";
 import { fromDb } from "@/infra/db/money";
 import { currentCashPosition } from "@/services/cash/closure";
 
@@ -75,11 +75,8 @@ export async function getCashOverview(
 
   if (!account) return null;
 
-  const position = await currentCashPosition(
-    prisma,
-    organizationId,
-    account.id,
-    asOf,
+  const position = await tenantTransaction((tx) =>
+    currentCashPosition(tx, organizationId, account.id, asOf),
   );
 
   return {

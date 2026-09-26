@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 
 import type { UserRole } from "@/generated/prisma";
 import { prisma } from "@/infra/db/client";
+import { setRequestTenant } from "@/infra/db/request-tenant";
+import { withOrganization } from "@/infra/db/tenancy";
 
 import { readSession } from "./session";
 
@@ -41,29 +43,39 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   const claims = await readSession();
   if (!claims) return null;
 
-  const user = await prisma.user.findFirst({
-    where: {
-      id: claims.userId,
-      organizationId: claims.organizationId,
-      archivedAt: null,
-    },
-    select: {
-      id: true,
-      organizationId: true,
-      email: true,
-      name: true,
-      role: true,
-      status: true,
-      sessionVersion: true,
-      organization: { select: { status: true } },
-    },
-  });
+  // The token names its organization, so the lookup that verifies it can
+  // already be scoped to that organization. A forged token naming someone
+  // else's organization gets no further than this: the signature check above
+  // rejects it, and Row-Level Security would return nothing even if it did not.
+  const user = await withOrganization(claims.organizationId, () =>
+    prisma.user.findFirst({
+      where: {
+        id: claims.userId,
+        organizationId: claims.organizationId,
+        archivedAt: null,
+      },
+      select: {
+        id: true,
+        organizationId: true,
+        email: true,
+        name: true,
+        role: true,
+        status: true,
+        sessionVersion: true,
+        organization: { select: { status: true } },
+      },
+    }),
+  );
 
   if (!user) return null;
   if (user.status !== "ACTIVE") return null;
   if (user.organization.status !== "ACTIVE") return null;
   // A bumped version invalidates every token issued before it.
   if (user.sessionVersion !== claims.sessionVersion) return null;
+
+  // From here on every query in this request is scoped to this organization by
+  // PostgreSQL itself, not by remembering to add a where clause.
+  setRequestTenant(user.organizationId);
 
   return {
     id: user.id,
