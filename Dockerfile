@@ -20,6 +20,14 @@ WORKDIR /app
 RUN apk add --no-cache openssl
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+# prisma7.config.ts refuses to load without a DATABASE_URL, and .dockerignore
+# keeps the real .env out of the image on purpose. This placeholder exists only
+# to satisfy that check while generating the client and compiling: nothing here
+# connects to a database, and the real URL arrives from the environment at run
+# time. It must never be used as a fallback at run time.
+ENV DATABASE_URL="postgresql://build:build@127.0.0.1:5432/build?schema=public"
+
 # The client is generated into src/generated/prisma, so it must exist before tsc.
 RUN npx prisma generate --config prisma7.config.ts
 RUN npm run build

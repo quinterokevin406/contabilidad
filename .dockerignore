@@ -1,0 +1,34 @@
+# Without this file, `COPY . .` bakes the developer's .env — AUTH_SECRET and the
+# database password — into an image layer, where anyone who can pull the image
+# can read it back out. Deleting it in a later layer does not remove it.
+
+.env
+.env.*
+!.env.example
+
+node_modules
+.next
+out
+build
+
+.git
+.gitignore
+
+# Database dumps. They hold every client, loan and payment.
+backups
+
+# Regenerated inside the image by `prisma generate`.
+src/generated
+
+# Local tooling and scratch output.
+.claude
+.vscode
+dev.log
+*.log
+coverage
+*.tsbuildinfo
+
+Dockerfile
+docker-compose.yml
+README.md
+docs
