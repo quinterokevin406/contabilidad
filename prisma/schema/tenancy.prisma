@@ -45,6 +45,9 @@ model Organization {
   receiptSequences      ReceiptSequence[]
   idempotencyKeys       IdempotencyKey[]
 
+  subscription         Subscription?
+  subscriptionPayments SubscriptionPayment[]
+
   @@map("organizations")
 }
 

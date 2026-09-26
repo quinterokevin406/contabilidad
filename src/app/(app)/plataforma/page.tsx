@@ -2,14 +2,18 @@ import type { Metadata } from "next";
 import { Building2, ShieldAlert } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { formatMoney } from "@/core/money/format";
+import { todayIn } from "@/core/time/calendar-date";
 import { Card, CardHeader, EmptyState } from "@/components/ui/card";
 import { formatInstant } from "@/core/time/format";
 import { getOrganizationSettings, requirePlatformOwner } from "@/server/auth/dal";
+import { listBilling } from "@/server/platform/billing";
 import {
   listOrganizations,
   listStatusChanges,
 } from "@/server/platform/queries";
 
+import { BillingPanel } from "./billing-panel";
 import { StatusButton } from "./suspend-dialog";
 
 export const metadata: Metadata = { title: "Plataforma" };
@@ -18,10 +22,32 @@ export default async function PlatformPage() {
   const owner = await requirePlatformOwner();
   const settings = await getOrganizationSettings();
 
-  const [organizations, changes] = await Promise.all([
+  const today = todayIn(settings.timeZone);
+
+  const [organizations, changes, billing] = await Promise.all([
     listOrganizations(),
     listStatusChanges(),
+    listBilling(settings.timeZone),
   ]);
+
+  // Money never crosses to the client as an object: it is formatted here and
+  // travels as text, the same as everywhere else in this application.
+  const billingRows = billing.map((row) => ({
+    organizationId: row.organizationId,
+    organizationName: row.organizationName,
+    price: row.price ? formatMoney(row.price) : null,
+    currencyCode: row.currencyCode,
+    billingDay: row.billingDay,
+    graceDays: row.graceDays,
+    renewalBasis: row.renewalBasis,
+    paidThrough: row.paidThrough,
+    cutoffOn: row.cutoffOn,
+    state: row.state,
+    daysPastDue: row.daysPastDue,
+    collected: formatMoney(row.collected),
+    paymentCount: row.paymentCount,
+    lastPaidOn: row.lastPaidOn,
+  }));
 
   const active = organizations.filter((o) => o.status === "ACTIVE").length;
   const suspended = organizations.length - active;
@@ -132,6 +158,8 @@ export default async function PlatformPage() {
           </div>
         )}
       </Card>
+
+      <BillingPanel rows={billingRows} today={today} />
 
       {changes.length > 0 && (
         <Card>

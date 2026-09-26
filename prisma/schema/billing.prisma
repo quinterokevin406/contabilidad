@@ -1,0 +1,109 @@
+/// What each business pays to use this system.
+///
+/// This is the PLATFORM's own revenue, not the lender's books. It never touches
+/// a client, a loan or a peso of theirs — it lives here because the decision it
+/// drives (cut access or not) has to be made against the same database.
+model Subscription {
+  id             String @id @default(cuid())
+  organizationId String @unique
+
+  /// What they pay per period. Never a float, same as everything else here.
+  price        Decimal @db.Decimal(18, 2)
+  /// ISO 4217. USD and COP are both normal for a Colombian operator.
+  currencyCode String  @default("USD")
+
+  /// Day of month the bill falls due. Capped at 28 so every month has one.
+  billingDay Int @default(1)
+
+  /// Access is paid for through the END of this day, inclusive.
+  ///
+  /// Null means nothing has been paid yet — a trial, or a business that was
+  /// set up and never billed.
+  paidThrough DateTime? @db.Date
+
+  /// Days after paidThrough before access is cut. The operator's own call,
+  /// not a hardcoded courtesy.
+  graceDays Int @default(5)
+
+  /// Where the next period is measured from when a payment arrives late.
+  ///
+  /// PREVIOUS_DUE_DATE keeps the billing rhythm: a customer due the 5th who
+  /// pays on the 20th is still paid through the 5th of next month, so being
+  /// late buys nothing. EFFECTIVE_DATE starts the new period on the day the
+  /// money arrived, which hands them the late days for free and lets the cycle
+  /// drift a little further every month.
+  ///
+  /// This is the same choice already made for loan renewals, and it is a
+  /// decision about revenue — not a default worth burying in code.
+  renewalBasis RenewalDueBasis @default(PREVIOUS_DUE_DATE)
+
+  status SubscriptionStatus @default(TRIAL)
+
+  startedAt DateTime  @db.Date
+  endedAt   DateTime? @db.Date
+  notes     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payments     SubscriptionPayment[]
+
+  @@index([status])
+  @@index([paidThrough])
+  @@map("subscriptions")
+}
+
+/// One payment received for a subscription.
+///
+/// Recorded by hand or by a gateway later; the shape does not change. Nothing
+/// here is ever deleted — a mistaken payment is corrected by recording its
+/// opposite, exactly like the lending side of the system.
+model SubscriptionPayment {
+  id             String @id @default(cuid())
+  subscriptionId String
+  organizationId String
+
+  amount       Decimal @db.Decimal(18, 2)
+  currencyCode String
+
+  /// Business date the money was received.
+  paidOn DateTime @db.Date
+
+  /// How it arrived: a transfer, cash, a gateway's name. Free text on purpose
+  /// — the operator knows their own channels better than a fixed list does.
+  method    String
+  /// Transfer number, gateway id, whatever makes it findable again.
+  reference String?
+
+  /// How many billing periods this payment bought.
+  periodsCovered Int @default(1)
+  /// The window this payment extended access to, frozen at the time it was
+  /// recorded so a later change of price or billing day cannot rewrite it.
+  coversFrom     DateTime @db.Date
+  coversThrough  DateTime @db.Date
+
+  /// Null for a gateway or an import.
+  recordedById String?
+  notes        String?
+
+  createdAt DateTime @default(now())
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, paidOn])
+  @@index([subscriptionId, paidOn])
+  @@map("subscription_payments")
+}
+
+enum SubscriptionStatus {
+  /// Using it, not paying yet.
+  TRIAL
+  /// Paid and current.
+  ACTIVE
+  /// Past the due date, inside or beyond the grace window.
+  PAST_DUE
+  /// Deliberately ended. Their data stays; their access does not.
+  CANCELLED
+}

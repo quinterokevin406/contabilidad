@@ -346,6 +346,32 @@ late subscription would be entitled to sue, and would be right.
 The reason is recorded in the customer's own history, where they can read it
 and argue with it.
 
+### Charging for the platform never touches the lender's books
+
+Subscriptions live in their own tables and their own engine. Suspending a
+customer who has not paid sets a status the data access layer already re-reads
+on every request — nothing of theirs is deleted, and `verify:billing` counts
+every client, loan, payment and movement before and after to prove it.
+
+Recording a payment reactivates them in the same transaction, because a
+customer who has paid should not have to wait for somebody to remember.
+
+When a payment arrives late, the new period is measured from where the last one
+ended rather than from the day the money arrived — so being late buys nothing
+and the billing day never drifts. That is the same rule already chosen for loan
+renewals, and it is a stored setting per subscription, not a constant.
+
+**No payment gateway is integrated.** The money can arrive by transfer, cash or
+a processor, and none of that changes what has to be recorded. A gateway, when
+there is one worth choosing, becomes another caller of the same service.
+
+```bash
+npm run billing:enforce -- --dry-run   # what it would cut off
+npm run billing:enforce                # do it
+```
+
+Run the dry run first, every time you change the grace days.
+
 ### Every balance is derived, never cached
 
 Outstanding principal, pending interest, portfolio, cash and profit are computed
@@ -379,9 +405,9 @@ on the 24th is due on the 24th in Bogotá regardless of where the server sits.
 
 ```bash
 npm run db:test   # builds a throwaway database seeded with demo data
-npm test          # 257 unit tests of the financial engine
+npm test          # 272 unit tests of the financial engine
 npm run typecheck
-npm run verify    # everything above, plus eleven integration checks
+npm run verify    # everything above, plus twelve integration checks
 ```
 
 `db:test` is a prerequisite and only has to be run once. The integration checks
