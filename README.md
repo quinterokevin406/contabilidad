@@ -67,8 +67,9 @@ docker compose exec app npm run db:seed
 
 The app is then on `http://localhost:3000`.
 
-One deployment serves one business. The schema is multi-tenant — every table
-carries an `organizationId` — but two customers never share a database.
+One deployment can serve one business or several. Every tenant-scoped table
+carries an `organizationId` and is under Row-Level Security, so the database
+itself keeps one lender's rows away from another.
 
 ---
 

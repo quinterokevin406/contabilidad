@@ -1,8 +1,9 @@
 # Deploying to a VPS
 
-One deployment serves one business. Each customer gets their own server, their
-own database and their own volume — the schema is multi-tenant, but the
-deployment is not shared.
+One deployment can serve one business or several. Sell the software outright and
+each customer gets their own server; run it as a service and several lenders
+share one, kept apart by Row-Level Security in the database. This guide covers
+both — see **Deploying for a customer** at the end for the difference.
 
 This walkthrough takes about thirty minutes the first time and ten minutes
 every time after.
