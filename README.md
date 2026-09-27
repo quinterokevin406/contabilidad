@@ -159,6 +159,24 @@ Sign in with `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`.
 After five failed attempts an account locks for fifteen minutes. That is
 deliberate and it is recorded in the audit log.
 
+### Locked out, or lost the password
+
+There is no reset email and no security question. This is private software that
+sends nothing to anybody and depends on no mail service — the cost of that
+choice is that recovery happens from the server:
+
+```bash
+npm run user:password -- --list                  # who exists
+npm run user:password -- someone@example.com     # new password, printed once
+npm run user:password -- someone@example.com --password "one you choose"
+npm run user:password -- someone@example.com --unlock   # just clear the lockout
+```
+
+Shell access is the credential here: whoever owns an installation has it, and
+somebody on the internet does not. Changing a password closes that user's open
+sessions and clears any lockout at the same time — being locked out is usually
+why you are running it.
+
 ### Portable PostgreSQL (Windows, no administrator rights)
 
 If you cannot install PostgreSQL as a service:
