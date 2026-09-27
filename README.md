@@ -7,6 +7,9 @@ reports and history.
 Not a dashboard template. Every figure it shows is derived from a recorded
 financial movement, inside a transaction, on a real database.
 
+**Free software**, under the GNU Affero General Public License v3. Run it for
+your own business and you owe nobody anything — see [License](#license).
+
 ---
 
 ## Table of contents
@@ -21,6 +24,7 @@ financial movement, inside a transaction, on a real database.
 - [Project structure](#project-structure)
 - [The financial rules](#the-financial-rules)
 - [Verification](#verification)
+- [License](#license)
 
 ---
 
@@ -434,3 +438,27 @@ verify:tenancy       one organization cannot reach another's rows
 
 Run `npm run verify` after restoring a backup, after upgrading, and before
 handing the system to a customer.
+
+---
+
+## License
+
+GNU Affero General Public License v3 — full text in [LICENSE](LICENSE), plain
+language in [NOTICE](NOTICE).
+
+**Running it for your own lending business carries no obligations whatsoever.**
+Use it, change it, keep it to yourself. Nobody has to be told and nothing has
+to be published.
+
+The obligation appears only if you modify it *and* let other people use your
+modified version — including over a network, which is why this is the Affero
+licence rather than the plain GPL. Those people are then entitled to the source
+of what they are using.
+
+You may charge for installing, hosting, supporting or training. What you may
+not do is take this work, close it, and hand somebody a version they cannot see
+or share.
+
+It is distributed **without warranty**. Whoever runs it is responsible for their
+own books, their own backups, and their own compliance with the law where they
+operate.
