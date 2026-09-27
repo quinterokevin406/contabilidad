@@ -1,0 +1,47 @@
+Capital Control — administration system for a money-lending business.
+
+Copyright (C) 2026 Kevin Quintero
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+
+--------------------------------------------------------------------------------
+
+WHAT THIS MEANS IN PRACTICE
+
+If you run this to administer your own lending business, you have no
+obligations at all. Use it, change it, run it for as long as you like. Nobody
+has to be told and nothing has to be published.
+
+The obligation only appears if you modify the program AND let other people use
+your modified version — including over a network, which is why this is the
+Affero license and not the plain GPL. In that case the people using it are
+entitled to the source of the version they are using.
+
+You may charge for installing it, hosting it, supporting it or training people
+on it. What you may not do is take this work, close it, and hand someone a
+version they cannot see or share.
+
+--------------------------------------------------------------------------------
+
+ABOUT THE NUMBERS
+
+This software keeps financial records. It is distributed WITHOUT WARRANTY, and
+that is not a formality: whoever runs it is responsible for their own books,
+their own backups and their own compliance with the law where they operate.
+
+The system never assumes an interest rate is legal. It records what you tell it
+and shows it transparently. It does not consult any external source and it will
+never alter a contract or a balance on its own.
+
+Before trusting it with a real business, read the financial rules in README.md
+and run `npm run verify`.
