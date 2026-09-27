@@ -228,19 +228,21 @@ src/
     cash/       Ledger projection, operating result, equity.
     metrics/    Ratios and growth indicators.
 
+    billing/    Subscription dates: paid through when, cut off when.
+
   services/     Use cases. Each takes a transaction and writes rows.
   server/       Server-only queries and Server Actions, per module.
   app/          Routes (App Router). One folder per screen.
   components/   Shared interface pieces.
   infra/db/     Prisma client and the Decimal ↔ Money boundary.
 
-prisma/schema/  34 tables, 32 enums, zero float columns, 31 under RLS.
+prisma/schema/  36 tables, 33 enums, zero float columns, 33 under RLS.
 scripts/        Integration verification, backups, local database.
 docs/           Backup, restore and migration.
 ```
 
 The dependency direction never inverts: `core` knows nothing about Prisma or
-Next.js, which is why its 257 tests run in under four seconds and why the
+Next.js, which is why its 272 tests run in under four seconds and why the
 financial rules can be read without a database in front of you.
 
 ---
