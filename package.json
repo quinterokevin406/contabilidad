@@ -41,7 +41,8 @@
     "verify:platform": "tsx --conditions=react-server --env-file=.env.test scripts/verify-platform.mts",
     "verify:backup": "node scripts/verify-backup.mjs",
     "billing:enforce": "tsx --conditions=react-server --env-file=.env scripts/enforce-billing.mts",
-    "verify:billing": "tsx --conditions=react-server --env-file=.env.test scripts/verify-billing.mts"
+    "verify:billing": "tsx --conditions=react-server --env-file=.env.test scripts/verify-billing.mts",
+    "user:password": "tsx --conditions=react-server --env-file=.env scripts/reset-password.mts"
   },
   "dependencies": {
     "@date-fns/tz": "^1.5.0",
