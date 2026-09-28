@@ -116,6 +116,22 @@ npm run backup -- --keep 90
 Safety copies taken before a restore are never pruned — those exist precisely
 because something already went wrong.
 
+### Getting it off the machine for free
+
+If the computer already has OneDrive, Google Drive or Dropbox installed, point
+the backup at that folder and the copy leaves the machine on its own:
+
+```bash
+npm run backup -- --out "C:\Users\TuUsuario\OneDrive\CapitalControl-Backups"
+```
+
+Use that same path in the scheduled task. The script reports which case it is
+every time it runs — whether the file stayed on this disk or landed somewhere
+that syncs — and when it finds a synced folder it prints the exact command.
+
+This is not a real off-site backup policy, and it is enormously better than one
+copy on one disk.
+
 ### Verify it, or you do not have one
 
 Once a quarter, restore a backup into a scratch database and log in. A backup

@@ -252,10 +252,47 @@ function create() {
   console.log(`\nDone — ${(size / 1024 / 1024).toFixed(2)} MB`);
   prune(dir);
 
-  console.log(
-    "\nA backup that only exists on this machine is not a backup.\n" +
-      "Copy it somewhere else before you need it.",
-  );
+  warnIfSameMachine(dir);
+}
+
+/**
+ * Says so when the backup landed on the same disk as the database.
+ *
+ * The failure this protects against — a dead drive, a stolen laptop,
+ * ransomware — takes the original and the copy together when they sit in the
+ * same box. Generic advice gets ignored; a path you can paste does not, so if
+ * there is a synced folder on this machine the message names it.
+ */
+function warnIfSameMachine(dir) {
+  const inProject = resolve(dir).startsWith(resolve(projectRoot));
+  const synced = [
+    process.env.OneDrive,
+    process.env.OneDriveConsumer,
+    join(process.env.USERPROFILE ?? process.env.HOME ?? "", "OneDrive"),
+    join(process.env.USERPROFILE ?? process.env.HOME ?? "", "Google Drive"),
+    join(process.env.HOME ?? "", "Dropbox"),
+  ].find((candidate) => candidate && existsSync(candidate));
+
+  const isSynced = synced && resolve(dir).startsWith(resolve(synced));
+
+  if (isSynced) {
+    console.log(
+      "\nSaved inside a synced folder, so a copy leaves this machine on its own.",
+    );
+    return;
+  }
+
+  console.log("\nA backup that only exists on this machine is not a backup.");
+
+  if (inProject && synced) {
+    console.log(
+      "A synced folder was found on this computer. Writing the backup there\n" +
+        "gets it off the disk automatically:\n\n" +
+        `  npm run backup -- --out "${join(synced, "CapitalControl-Backups")}"`,
+    );
+  } else {
+    console.log("Copy it somewhere else before you need it.");
+  }
 }
 
 /**

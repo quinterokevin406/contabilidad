@@ -229,9 +229,23 @@ Te deja un archivo en la carpeta `backups`.
    - Iniciar en: la carpeta del proyecto, por ejemplo
      `C:\Users\TuUsuario\Documents\capital-control`
 
-**Y copiá esos archivos a otro lado.** Un backup que vive en el mismo disco que
-la base no te salva del problema del que te estás cuidando. Una vez por semana,
-copiá la carpeta `backups` a un pendrive o a Google Drive.
+**Y que salgan de esa computadora.** Un backup que vive en el mismo disco que la
+base no te salva del problema del que te estás cuidando: si ese disco muere, se
+lleva los dos.
+
+Si tenés OneDrive, Google Drive o Dropbox (Windows ya trae OneDrive), lo más
+simple es que el backup escriba directo ahí y se suba solo:
+
+```bash
+npm run backup -- --out "C:\Users\TuUsuario\OneDrive\CapitalControl-Backups"
+```
+
+Poné esa misma ruta en los argumentos de la tarea programada. El script te avisa
+cada vez si el archivo quedó en el mismo disco o si llegó a una carpeta que
+sincroniza, así que no tenés que acordarte de revisarlo.
+
+Si no usás ninguno de esos, copiá la carpeta `backups` a un pendrive una vez por
+semana. Es menos cómodo y sirve igual.
 
 Detalle completo en [`BACKUP.md`](BACKUP.md).
 
