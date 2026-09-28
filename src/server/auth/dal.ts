@@ -5,7 +5,6 @@ import { redirect } from "next/navigation";
 
 import type { UserRole } from "@/generated/prisma";
 import { prisma } from "@/infra/db/client";
-import { setRequestTenant } from "@/infra/db/request-tenant";
 import { withOrganization } from "@/infra/db/tenancy";
 
 import { readSession } from "./session";
@@ -80,10 +79,6 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   if (user.organization.status !== "ACTIVE") return null;
   // A bumped version invalidates every token issued before it.
   if (user.sessionVersion !== claims.sessionVersion) return null;
-
-  // From here on every query in this request is scoped to this organization by
-  // PostgreSQL itself, not by remembering to add a where clause.
-  setRequestTenant(user.organizationId);
 
   return {
     id: user.id,

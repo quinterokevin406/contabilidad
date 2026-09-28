@@ -101,7 +101,9 @@ export async function setSessionCookie(token: string): Promise<void> {
   store.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: env.NODE_ENV === "production",
+    // Opt-out exists only for an installation on a local network, where there
+    // is no domain to put a certificate on. See ALLOW_INSECURE_COOKIES.
+    secure: env.NODE_ENV === "production" && !env.ALLOW_INSECURE_COOKIES,
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,
   });

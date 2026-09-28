@@ -32,6 +32,24 @@ const schema = z.object({
 
   AUTH_URL: z.string().url().optional(),
 
+  /**
+   * Allows the session cookie over plain HTTP.
+   *
+   * For ONE situation: an installation that lives on a computer inside a home
+   * or office network, reached from phones on the same WiFi. There is no domain
+   * there and therefore no certificate, and a Secure cookie would simply be
+   * discarded by the browser — the login form would return to itself with no
+   * error and no way to guess why.
+   *
+   * NEVER set this on anything reachable from the internet. Without TLS the
+   * session token crosses the network in the clear, and whoever reads it is
+   * that user until it expires.
+   */
+  ALLOW_INSECURE_COOKIES: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((v) => v === "true"),
+
   // Seed-only values. Absent in a normal production boot.
   SEED_ADMIN_EMAIL: z.string().email().optional(),
   SEED_ADMIN_PASSWORD: z.string().min(8).optional(),
@@ -70,6 +88,17 @@ export function getEnv(): Env {
   }
 
   cached = parsed.data;
+
+  // Said out loud, once, because the cost of forgetting it is that session
+  // tokens travel the network in the clear.
+  if (cached.NODE_ENV === "production" && cached.ALLOW_INSECURE_COOKIES) {
+    console.warn(
+      "\n  ⚠  ALLOW_INSECURE_COOKIES está activo: la sesión viaja sin cifrar.\n" +
+        "     Correcto SOLO en una red local (una PC y los celulares del mismo WiFi).\n" +
+        "     Si este equipo es alcanzable desde internet, apagalo y usá HTTPS.\n",
+    );
+  }
+
   return cached;
 }
 

@@ -108,8 +108,8 @@ export function asDeclared<T>(fn: () => Promise<T>): Promise<T> {
  * NEVER call this from anything that serves an HTTP request. A web server
  * handles many lenders' requests in the same process, and a tenant pinned this
  * way would outlive the request that set it — which is the exact failure this
- * whole mechanism exists to prevent. Request code uses `setRequestTenant`,
- * which is bound to React's per-request lifetime.
+ * whole mechanism exists to prevent. Request code takes its tenant from the
+ * session cookie instead, which is scoped to the request by construction.
  */
 export function enterOrganizationForProcess(organizationId: string): void {
   storage.enterWith({ setting: organizationId, declared: false });

@@ -212,6 +212,13 @@ Before exposing it to the internet:
 For a step-by-step VPS deployment with automatic TLS, see
 [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
+To run it on a single computer and reach it from phones on the same WiFi — no
+server, no monthly cost — see [`docs/INSTALAR-EN-PC.md`](docs/INSTALAR-EN-PC.md),
+written in Spanish for somebody who does not program. That setup needs
+`ALLOW_INSECURE_COOKIES="true"`, because a local network has no certificate and
+a `Secure` cookie would simply be discarded. Never set it on anything reachable
+from the internet.
+
 The app is installable as a PWA: on a phone, "Add to home screen" gives the
 collector a full-screen app with no address bar.
 

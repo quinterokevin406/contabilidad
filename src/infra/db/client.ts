@@ -61,8 +61,8 @@ const DECLARE_TENANT = "SELECT set_config('app.organization_id', $1, true)";
  * When neither applies the answer is the empty string, which matches no
  * organization. Absence of context denies.
  */
-function resolveTenant(): string {
-  return currentTenantSetting() || readRequestTenant();
+async function resolveTenant(): Promise<string> {
+  return currentTenantSetting() || (await readRequestTenant());
 }
 
 /** "LoanPeriod" -> "loanPeriod", the property name on the client. */
@@ -105,7 +105,7 @@ function runOn(
 const prismaExtended = base.$extends({
   query: {
     async $allOperations({ model, operation, args }) {
-      const setting = resolveTenant();
+      const setting = await resolveTenant();
 
       return base.$transaction(async (tx) => {
         await tx.$executeRawUnsafe(DECLARE_TENANT, setting);
@@ -137,11 +137,11 @@ export type TransactionClient = Prisma.TransactionClient;
  * to be established by hand because a transaction is not itself an operation
  * the extension can intercept.
  */
-export function tenantTransaction<T>(
+export async function tenantTransaction<T>(
   fn: (tx: TransactionClient) => Promise<T>,
   options?: { timeout?: number; maxWait?: number },
 ): Promise<T> {
-  const setting = resolveTenant();
+  const setting = await resolveTenant();
 
   return base.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(DECLARE_TENANT, setting);

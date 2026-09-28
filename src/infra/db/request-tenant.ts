@@ -1,37 +1,43 @@
 import { cache } from "react";
 
 /**
- * The organization this request belongs to.
+ * The organization a request belongs to, taken from its own session cookie.
  *
- * `cache()` hands back the same object for the duration of one request and a
- * fresh one for the next, which is the property that matters: a tenant can
- * never survive into someone else's request the way a module-level variable or
- * a pooled connection setting could.
+ * AN EARLIER VERSION OF THIS FILE kept a mutable object created by React's
+ * `cache()`, which the data access layer wrote to after verifying the session.
+ * It worked while rendering a page and silently did not inside a Server Action:
+ * the write and the read landed on different objects, the tenant came back
+ * empty, and PostgreSQL correctly refused to touch a row nobody had claimed.
+ * Logging in failed on its own last statement.
  *
- * The data access layer writes here once it has verified the session; the
- * Prisma extension reads it before every query. A page that somehow queries
- * before authenticating finds it empty, and an empty tenant denies — the screen
- * comes up blank, which is a bug someone reports, rather than showing another
- * lender's clients.
+ * Deriving it from the signed token instead removes the whole class of problem.
+ * There is nothing to set and therefore no order to get wrong, the value cannot
+ * be anything other than what the session says, and it is scoped to the request
+ * by construction rather than by a framework detail.
+ *
+ * `cache()` is still used, but only so the signature is verified once per
+ * request instead of once per query. If it ever stops deduplicating, this gets
+ * slower and stays correct.
  */
-const requestTenantRef = cache((): { organizationId: string | null } => ({
-  organizationId: null,
-}));
-
-export function setRequestTenant(organizationId: string): void {
-  requestTenantRef().organizationId = organizationId;
-}
+const resolveFromSession = cache(async (): Promise<string> => {
+  // Imported lazily: scripts and the seed load this module too, and they have
+  // no request to read a cookie from.
+  const { readSession } = await import("@/server/auth/session");
+  const claims = await readSession();
+  return claims?.organizationId ?? "";
+});
 
 /**
  * Reads the current request's organization, or "" when there is none.
  *
  * Returns "" rather than throwing outside a request — scripts, the seed and the
- * verification suite have no React request context and declare their tenant
- * explicitly instead.
+ * verification suite have no session and declare their tenant explicitly.
+ * Empty denies, so the failure mode is an empty result, never someone else's
+ * data.
  */
-export function readRequestTenant(): string {
+export async function readRequestTenant(): Promise<string> {
   try {
-    return requestTenantRef().organizationId ?? "";
+    return await resolveFromSession();
   } catch {
     return "";
   }

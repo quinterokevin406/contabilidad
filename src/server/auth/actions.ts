@@ -6,8 +6,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { prisma } from "@/infra/db/client";
-import { setRequestTenant } from "@/infra/db/request-tenant";
-import { withSystemAccess } from "@/infra/db/tenancy";
+import { withOrganization, withSystemAccess } from "@/infra/db/tenancy";
 
 import { getCurrentUser } from "./dal";
 import { clearSessionCookie, setSessionCookie, signSession } from "./session";
@@ -96,10 +95,6 @@ export async function login(
     return { error: GENERIC };
   }
 
-  // The organization is known now, so the rest of the sign-in — the failed
-  // attempt counter, the audit entry — is scoped like any other request.
-  setRequestTenant(user.organizationId);
-
   if (user.lockedUntil && user.lockedUntil > new Date()) {
     const minutes = Math.max(
       1,
@@ -118,17 +113,21 @@ export async function login(
     const attempts = user.failedAttempts + 1;
     const locked = attempts >= MAX_FAILED_ATTEMPTS;
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        failedAttempts: locked ? 0 : attempts,
-        lockedUntil: locked
-          ? new Date(Date.now() + LOCK_MINUTES * 60_000)
-          : null,
-      },
-    });
+    // Signing in is the one moment with no session cookie yet, so these
+    // writes have to name their organization rather than inherit it.
+    await withOrganization(user.organizationId, async () => {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          failedAttempts: locked ? 0 : attempts,
+          lockedUntil: locked
+            ? new Date(Date.now() + LOCK_MINUTES * 60_000)
+            : null,
+        },
+      });
 
-    await recordFailedLogin(user.id, email, ipAddress, userAgent);
+      await recordFailedLogin(user.id, email, ipAddress, userAgent);
+    });
 
     return {
       error: locked
@@ -143,23 +142,25 @@ export async function login(
     };
   }
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { failedAttempts: 0, lockedUntil: null, lastLoginAt: new Date() },
-  });
+  await withOrganization(user.organizationId, async () => {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { failedAttempts: 0, lockedUntil: null, lastLoginAt: new Date() },
+    });
 
-  await prisma.auditLog.create({
-    data: {
-      organizationId: user.organizationId,
-      action: "LOGIN",
-      entity: "User",
-      entityId: user.id,
-      summary: `Inicio de sesión de ${user.email}`,
-      actorId: user.id,
-      actorEmail: user.email,
-      ipAddress,
-      userAgent,
-    },
+    await prisma.auditLog.create({
+      data: {
+        organizationId: user.organizationId,
+        action: "LOGIN",
+        entity: "User",
+        entityId: user.id,
+        summary: `Inicio de sesión de ${user.email}`,
+        actorId: user.id,
+        actorEmail: user.email,
+        ipAddress,
+        userAgent,
+      },
+    });
   });
 
   const token = await signSession({
