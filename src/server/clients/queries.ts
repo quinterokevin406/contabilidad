@@ -19,6 +19,8 @@ export interface ClientListFilters {
   status?: ClientStatus | "ALL";
   page?: number;
   pageSize?: number;
+  /** Show the archived ones instead of the day-to-day list. */
+  archived?: boolean;
 }
 
 export interface ClientListRow {
@@ -66,7 +68,7 @@ export async function listClients(
 
   const where = {
     organizationId,
-    archivedAt: null,
+    archivedAt: filters.archived ? { not: null } : null,
     ...(status ? { status } : {}),
     ...(search
       ? {

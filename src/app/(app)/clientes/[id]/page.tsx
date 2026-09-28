@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
+  Archive,
   ArrowDownLeft,
   ArrowLeft,
   ArrowUpRight,
@@ -18,6 +19,8 @@ import { formatMoney, formatRate } from "@/core/money/format";
 import { formatDate, formatDateShort } from "@/core/time/format";
 import type { RatePeriodLabel } from "@/core/money/format";
 import { requireUser } from "@/server/auth/dal";
+
+import { ArchiveClientButton } from "./archive-dialog";
 import {
   getClientDetail,
   type TimelineEvent,
@@ -60,6 +63,17 @@ export default async function ClientDetailPage({
         Clientes
       </Link>
 
+      {client.archivedAt && (
+        <Card className="flex items-start gap-3 border-warning/25 bg-warning-soft/20 px-5 py-4">
+          <Archive className="mt-0.5 size-4 shrink-0 text-warning" />
+          <p className="text-xs text-ink-muted">
+            Este cliente está <strong className="text-ink">archivado</strong>:
+            no aparece en las listas del día a día ni en los cobros. Todo su
+            historial está intacto y sigue contando en los reportes.
+          </p>
+        </Card>
+      )}
+
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold text-ink">{client.fullName}</h1>
@@ -88,18 +102,27 @@ export default async function ClientDetailPage({
           )}
         </div>
 
-        {client.whatsappPhone && (
-          <WhatsAppButton
-            phone={client.whatsappPhone}
-            clientName={client.fullName}
-            nextDueOn={client.activeLoans[0]?.nextDueOn ?? null}
-            amountDue={
-              client.activeLoans[0]
-                ? client.activeLoans[0].outstandingInterest.toDatabaseString()
-                : null
-            }
-          />
-        )}
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {user.role === "ADMIN" && (
+            <ArchiveClientButton
+              clientId={client.id}
+              clientName={client.fullName}
+              archived={client.archivedAt !== null}
+            />
+          )}
+          {client.whatsappPhone && (
+            <WhatsAppButton
+              phone={client.whatsappPhone}
+              clientName={client.fullName}
+              nextDueOn={client.activeLoans[0]?.nextDueOn ?? null}
+              amountDue={
+                client.activeLoans[0]
+                  ? client.activeLoans[0].outstandingInterest.toDatabaseString()
+                  : null
+              }
+            />
+          )}
+        </div>
       </header>
 
       {client.notes && (

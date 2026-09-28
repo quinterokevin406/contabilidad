@@ -346,6 +346,18 @@ connection next.
 queries with **no filter at all** — raw SQL and lookups by exact id included —
 against a second organization's data, and every one comes back empty.
 
+### Archiving is the only "delete", and it deletes nothing
+
+A client who has ever moved money is never removed. Archiving takes them out of
+the day-to-day lists and leaves every loan, payment, receipt and cash movement
+exactly where it is, still counted in every historical report. Their file stays
+readable and they can be brought back.
+
+It refuses while the client still owes: the message names the loans and the
+outstanding capital. Hiding a debtor is not tidying up, it is losing a debt —
+the balance would keep counting in the portfolio while the person who owes it is
+nowhere in the interface.
+
 ### The platform operator is not an administrator
 
 `ADMIN` is the role every customer's own administrator holds, so it can never
@@ -438,7 +450,7 @@ on the 24th is due on the 24th in Bogotá regardless of where the server sits.
 npm run db:test   # builds a throwaway database seeded with demo data
 npm test          # 272 unit tests of the financial engine
 npm run typecheck
-npm run verify    # everything above, plus thirteen integration checks
+npm run verify    # everything above, plus fourteen integration checks
 ```
 
 `db:test` is a prerequisite and only has to be run once. The integration checks

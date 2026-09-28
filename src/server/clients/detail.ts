@@ -57,6 +57,8 @@ export interface ClientLoanRow {
 export interface ClientDetail {
   id: string;
   code: string;
+  /** Out of the daily lists since this moment. Their file stays readable. */
+  archivedAt: Date | null;
   fullName: string;
   documentType: string | null;
   documentNumber: string | null;
@@ -91,10 +93,14 @@ export async function getClientDetail(
   clientId: string,
 ): Promise<ClientDetail | null> {
   const client = await prisma.client.findFirst({
-    where: { id: clientId, organizationId, archivedAt: null },
+    // Deliberately NOT filtered by archivedAt: archiving takes a client out of
+    // the daily lists, it does not hide their file. Everything they ever did has
+    // to stay reachable.
+    where: { id: clientId, organizationId },
     select: {
       id: true,
       code: true,
+      archivedAt: true,
       fullName: true,
       documentType: true,
       documentNumber: true,

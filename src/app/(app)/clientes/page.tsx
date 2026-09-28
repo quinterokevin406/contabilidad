@@ -44,11 +44,13 @@ export default async function ClientsPage({
     typeof params.pagina === "string" ? params.pagina : "1",
     10,
   );
+  const archived = params.archivados === "1";
 
   const [result, summary] = await Promise.all([
     listClients(user.organizationId, {
       search,
       status,
+      archived,
       page: Number.isFinite(page) ? page : 1,
     }),
     clientSummary(user.organizationId),
@@ -72,14 +74,29 @@ export default async function ClientsPage({
 
       <ClientFilters search={search} status={status} />
 
+      {/* Archived clients are not gone, just out of the way. The link is quiet
+          on purpose: it is somewhere to look, not something to reach for. */}
+      <div className="flex justify-end">
+        <Link
+          href={archived ? "/clientes" : "/clientes?archivados=1"}
+          className="text-xs text-ink-subtle transition-colors hover:text-accent"
+        >
+          {archived
+            ? "← Volver a los clientes activos"
+            : "Ver clientes archivados"}
+        </Link>
+      </div>
+
       {result.rows.length === 0 ? (
         <Card>
           <EmptyState
             icon={<Users className="size-8" />}
             title={
-              search || status !== "ALL"
-                ? "Ningún cliente coincide con el filtro"
-                : "Todavía no hay clientes"
+              archived
+                ? "No hay clientes archivados"
+                : search || status !== "ALL"
+                  ? "Ningún cliente coincide con el filtro"
+                  : "Todavía no hay clientes"
             }
             description={
               search || status !== "ALL"
