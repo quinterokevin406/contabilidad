@@ -1,8 +1,9 @@
 # Capital Control — one deployment, one business.
 #
-# Each customer runs their own stack with their own database and their own
-# volume. The schema is multi-tenant, but the deployment is not shared: two
-# lenders never touch the same PostgreSQL instance.
+# Sell the software outright and each customer gets their own stack, database
+# and volume. Run it as a service and several lenders share one: every
+# tenant-scoped table is under Row-Level Security, so the database itself
+# refuses to hand one organization another's rows.
 #
 #   1. cp .env.example .env   and fill in real values
 #   2. docker compose up -d
