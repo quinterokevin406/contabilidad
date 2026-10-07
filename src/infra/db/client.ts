@@ -25,12 +25,18 @@ const globalForPrisma = globalThis as unknown as {
 function createBaseClient(): PrismaClient {
   const env = getEnv();
 
+  // On a serverless host every invocation is its own short-lived process, and
+  // a hundred of them each holding ten connections exhausts the database in
+  // seconds. One connection per invocation is the shape that platform wants;
+  // the pooler in front of the database is what actually does the pooling.
+  const serverless = Boolean(process.env.NETLIFY || process.env.VERCEL);
+
   const adapter = new PrismaPg({
     connectionString: env.DATABASE_URL,
-    // A single-tenant install serves one operator and a handful of collectors.
+    // A long-running install serves one operator and a handful of collectors.
     // Ten connections is generous and keeps a cheap Postgres box comfortable.
-    max: 10,
-    idleTimeoutMillis: 30_000,
+    max: serverless ? 1 : 10,
+    idleTimeoutMillis: serverless ? 10_000 : 30_000,
     connectionTimeoutMillis: 10_000,
   });
 

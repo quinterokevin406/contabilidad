@@ -83,7 +83,8 @@ Copy `.env.example` to `.env`. Never commit `.env`.
 
 | Variable | Required | What it is |
 |---|:---:|---|
-| `DATABASE_URL` | yes | PostgreSQL connection string |
+| `DATABASE_URL` | yes | PostgreSQL connection string. Pooled, on a managed database |
+| `DIRECT_URL` | no | Unpooled connection, used only by migrations and the seed |
 | `AUTH_SECRET` | yes | Signs session cookies. **Generate a fresh one per deployment** |
 | `AUTH_URL` | yes | Public base URL, e.g. `https://prestamos.minegocio.co` |
 | `SEED_ADMIN_EMAIL` | first run | Login for the bootstrap administrator |
@@ -211,6 +212,13 @@ Before exposing it to the internet:
 
 For a step-by-step VPS deployment with automatic TLS, see
 [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
+To publish it on a link that works from anywhere — a managed PostgreSQL and a
+serverless host, no machine of your own to keep running — see
+[`docs/PUBLICAR-EN-LINEA.md`](docs/PUBLICAR-EN-LINEA.md) (Spanish). That setup
+needs a second connection string: the application uses the pooled `DATABASE_URL`
+and the CLI uses the unpooled `DIRECT_URL`, because a pooler in transaction mode
+cannot run schema changes.
 
 To run it on a single computer and reach it from phones on the same WiFi — no
 server, no monthly cost — see [`docs/INSTALAR-EN-PC.md`](docs/INSTALAR-EN-PC.md),

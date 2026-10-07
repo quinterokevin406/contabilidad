@@ -1,0 +1,18 @@
+# Netlify deployment.
+#
+# The database is NOT here: it lives in a managed PostgreSQL (Supabase or
+# similar) and this only runs the application. Migrations and the seed are run
+# from a laptop against DIRECT_URL, never from a build — a build that migrates
+# would re-run on every deploy and on every rollback.
+#
+# See docs/PUBLICAR-EN-LINEA.md.
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "24"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
