@@ -8,10 +8,13 @@ import { Card, EmptyState } from "@/components/ui/card";
 import { formatMoney, formatRate, type RatePeriodLabel } from "@/core/money/format";
 import { formatDate } from "@/core/time/format";
 import type { ComplianceStatus, LoanLifecycle } from "@/generated/prisma";
-import { requireUser } from "@/server/auth/dal";
+import { getOrganizationSettings, requireUser } from "@/server/auth/dal";
+import { prisma } from "@/infra/db/client";
+import { todayIn } from "@/core/time/calendar-date";
 import { listLoans } from "@/server/loans/queries";
 
 import { LoanFilters } from "./loan-filters";
+import { NewLoanButton } from "./new-loan-dialog";
 
 export const metadata: Metadata = { title: "Préstamos" };
 
@@ -27,6 +30,15 @@ export default async function LoansPage({
   searchParams,
 }: PageProps<"/prestamos">) {
   const user = await requireUser();
+  const settings = await getOrganizationSettings();
+
+  // The picker needs every client who can still take a loan, not just the page
+  // of loans being shown.
+  const clients = await prisma.client.findMany({
+    where: { organizationId: user.organizationId, archivedAt: null },
+    orderBy: { fullName: "asc" },
+    select: { id: true, code: true, fullName: true },
+  });
   const params = await searchParams;
 
   const search = typeof params.q === "string" ? params.q : "";
@@ -68,10 +80,12 @@ export default async function LoansPage({
             )}
           </p>
         </div>
-        <Button variant="primary">
-          <Plus />
-          Nuevo préstamo
-        </Button>
+        <NewLoanButton
+          clients={clients}
+          today={todayIn(settings.timeZone)}
+          defaultInterestMethod={settings.defaultInterestMethod}
+          defaultPeriodicity={settings.defaultPeriodicity}
+        />
       </header>
 
       <LoanFilters search={search} filter={filter} />

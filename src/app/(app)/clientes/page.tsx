@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { MessageCircle, Phone, UserPlus, Users } from "lucide-react";
+import { MessageCircle, Phone, Users } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { requireUser } from "@/server/auth/dal";
 import { clientSummary, listClients } from "@/server/clients/queries";
 
 import { ClientFilters } from "./client-filters";
+import { NewClientButton } from "./new-client-dialog";
 
 export const metadata: Metadata = { title: "Clientes" };
 
@@ -66,10 +67,7 @@ export default async function ClientsPage({
             {summary.blocked > 0 && ` · ${summary.blocked} bloqueados`}
           </p>
         </div>
-        <Button variant="primary">
-          <UserPlus />
-          Nuevo cliente
-        </Button>
+        <NewClientButton />
       </header>
 
       <ClientFilters search={search} status={status} />
@@ -105,10 +103,7 @@ export default async function ClientsPage({
             }
             action={
               !search && status === "ALL" ? (
-                <Button variant="primary">
-                  <UserPlus />
-                  Nuevo cliente
-                </Button>
+                <NewClientButton />
               ) : undefined
             }
           />

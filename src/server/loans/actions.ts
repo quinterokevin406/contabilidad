@@ -15,6 +15,7 @@ import { prisma, tenantTransaction } from "@/infra/db/client";
 import { fromDb } from "@/infra/db/money";
 import { getOrganizationSettings, requireWriteAccess } from "@/server/auth/dal";
 import { accrueLoan } from "@/services/loans/accrue";
+import { createLoan } from "@/services/loans/create-loan";
 import { postPayment } from "@/services/payments/post-payment";
 import { ServiceError } from "@/services/shared";
 
@@ -381,4 +382,124 @@ function humanError(error: unknown): string {
   // precise technical statement; anything else is a bug and says so.
   if (error instanceof Error && error.message) return error.message;
   return "Ocurrió un error inesperado y no se registró nada.";
+}
+
+/**
+ * Disbursing a loan.
+ *
+ * The rules are copied onto the loan here and frozen: interest method,
+ * periodicity, allocation order, rounding, how a period in progress is charged
+ * when it is settled early, where a renewal measures from. Changing a default
+ * in Settings tomorrow never reaches back into this loan — that is the whole
+ * reason they are stored per loan rather than read from configuration when a
+ * balance is computed.
+ */
+const newLoanSchema = z.object({
+  clientId: z.string().min(1, "Elegí un cliente."),
+  principal: moneySchema,
+  ratePercent: z
+    .string()
+    .trim()
+    .transform((raw) => raw.replace(/\./g, "").replace(",", "."))
+    .refine((v) => /^\d+(\.\d{1,4})?$/.test(v), "La tasa no es válida.")
+    .refine((v) => Number(v) > 0, "La tasa tiene que ser mayor a cero."),
+  periodicity: z.enum(["DAILY", "WEEKLY", "BIWEEKLY", "MONTHLY", "CUSTOM"]),
+  customPeriodDays: z.coerce.number().int().min(1).max(365).optional(),
+  interestMethod: z.enum([
+    "SIMPLE_ON_ORIGINAL_PRINCIPAL",
+    "SIMPLE_ON_OUTSTANDING_PRINCIPAL",
+  ]),
+  disbursedOn: z.string().min(10),
+  firstDueOn: z.string().min(10),
+  notes: z.string().optional(),
+  idempotencyKey: z.string().min(1),
+});
+
+export interface CreateLoanActionResult {
+  ok: boolean;
+  error: string | null;
+  message: string | null;
+  loanId: string | null;
+}
+
+export async function registerLoan(
+  _previous: CreateLoanActionResult,
+  formData: FormData,
+): Promise<CreateLoanActionResult> {
+  try {
+    const user = await requireWriteAccess();
+    const settings = await getOrganizationSettings();
+    const parsed = newLoanSchema.safeParse(Object.fromEntries(formData));
+
+    if (!parsed.success) {
+      return {
+        ok: false,
+        error: parsed.error.issues[0]?.message ?? "Datos inválidos.",
+        message: null,
+        loanId: null,
+      };
+    }
+
+    const data = parsed.data;
+    const disbursedOn = calendarDate(data.disbursedOn);
+    const firstDueOn = calendarDate(data.firstDueOn);
+
+    if (firstDueOn <= disbursedOn) {
+      return {
+        ok: false,
+        error: "El primer vencimiento tiene que ser posterior al desembolso.",
+        message: null,
+        loanId: null,
+      };
+    }
+
+    const result = await tenantTransaction((tx) =>
+      createLoan(tx, {
+        organizationId: user.organizationId,
+        clientId: data.clientId,
+        principal: Money.of(data.principal),
+        ratePercent: data.ratePercent,
+        periodicity: data.periodicity,
+        customPeriodDays:
+          data.periodicity === "CUSTOM" ? (data.customPeriodDays ?? 30) : null,
+        interestMethod: data.interestMethod,
+        // Frozen from the organization's defaults at this moment. A later
+        // change in Settings must never move a balance that already exists.
+        allocationStrategy: settings.defaultAllocationStrategy,
+        periodAnchor: settings.defaultPeriodAnchor,
+        roundingMode: settings.defaultRoundingMode,
+        moneyQuantum: settings.moneyQuantum.toString(),
+        openPeriodPolicy: settings.defaultOpenPeriodPolicy,
+        renewalDueBasis: settings.defaultRenewalDueBasis,
+        disbursedOn,
+        firstDueOn,
+        notes: data.notes ?? null,
+        actor: { userId: user.id, email: user.email },
+        idempotencyKey: data.idempotencyKey,
+      }),
+    );
+
+    revalidatePath("/prestamos");
+    revalidatePath("/clientes");
+    revalidatePath(`/clientes/${data.clientId}`);
+
+    return {
+      ok: true,
+      error: null,
+      message: result.deduplicated
+        ? `Ese préstamo ya estaba registrado como ${result.code}.`
+        : `Préstamo ${result.code} desembolsado. La plata salió de la caja.`,
+      loanId: result.loanId,
+    };
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error && error.message
+          ? error.message
+          : "Ocurrió un error y no se registró nada.",
+      message: null,
+      loanId: null,
+    };
+  }
 }

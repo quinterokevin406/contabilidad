@@ -18,8 +18,11 @@ import { Card, CardHeader, EmptyState } from "@/components/ui/card";
 import { formatMoney, formatRate } from "@/core/money/format";
 import { formatDate, formatDateShort } from "@/core/time/format";
 import type { RatePeriodLabel } from "@/core/money/format";
-import { requireUser } from "@/server/auth/dal";
+import { getOrganizationSettings, requireUser } from "@/server/auth/dal";
 
+import { todayIn } from "@/core/time/calendar-date";
+
+import { NewLoanButton } from "../../prestamos/new-loan-dialog";
 import { ArchiveClientButton } from "./archive-dialog";
 import {
   getClientDetail,
@@ -48,6 +51,7 @@ export default async function ClientDetailPage({
   params,
 }: PageProps<"/clientes/[id]">) {
   const user = await requireUser();
+  const settings = await getOrganizationSettings();
   const { id } = await params;
 
   const client = await getClientDetail(user.organizationId, id);
@@ -179,7 +183,22 @@ export default async function ClientDetailPage({
               ? "Sin préstamos vigentes"
               : `${client.activeLoans.length} vigente${client.activeLoans.length === 1 ? "" : "s"}`
           }
-          action={<Button variant="primary" size="sm">Nuevo préstamo</Button>}
+          action={
+            <NewLoanButton
+              clients={[
+                {
+                  id: client.id,
+                  code: client.code,
+                  fullName: client.fullName,
+                },
+              ]}
+              fixedClientId={client.id}
+              today={todayIn(settings.timeZone)}
+              defaultInterestMethod={settings.defaultInterestMethod}
+              defaultPeriodicity={settings.defaultPeriodicity}
+              size="sm"
+            />
+          }
         />
         {client.activeLoans.length === 0 ? (
           <EmptyState
