@@ -114,10 +114,8 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"     
 
 No Node on the server yet? `openssl rand -base64 32` does the same job.
 
-`DATABASE_URL` and `AUTH_URL` are **not** set by hand here: compose builds both
-from `APP_DOMAIN` and `POSTGRES_PASSWORD`. Two fields that must agree are two
-chances to disagree, and a mismatched `AUTH_URL` breaks login without producing
-a useful error.
+`DATABASE_URL` is **not** set by hand here: compose builds it from
+`POSTGRES_PASSWORD`. Two fields that must agree are two chances to disagree.
 
 Lock the file down — it holds the keys to every session and to the database:
 

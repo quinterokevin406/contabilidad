@@ -30,7 +30,6 @@ const schema = z.object({
         'node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"',
     ),
 
-  AUTH_URL: z.string().url().optional(),
 
   /**
    * Allows the session cookie over plain HTTP.

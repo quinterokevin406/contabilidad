@@ -86,7 +86,6 @@ Copy `.env.example` to `.env`. Never commit `.env`.
 | `DATABASE_URL` | yes | PostgreSQL connection string. Pooled, on a managed database |
 | `DIRECT_URL` | no | Unpooled connection, used only by migrations and the seed |
 | `AUTH_SECRET` | yes | Signs session cookies. **Generate a fresh one per deployment** |
-| `AUTH_URL` | yes | Public base URL, e.g. `https://prestamos.minegocio.co` |
 | `SEED_ADMIN_EMAIL` | first run | Login for the bootstrap administrator |
 | `SEED_ADMIN_PASSWORD` | first run | Its password. Change it after the first login |
 | `SEED_ADMIN_NAME` | no | Display name |
@@ -205,7 +204,6 @@ Before exposing it to the internet:
 
 1. **Serve it over HTTPS.** Session cookies are `Secure`; without TLS nobody can
    log in.
-2. **Set a real `AUTH_URL`.**
 3. **Set `SEED_DEMO_DATA=false`.**
 4. **Change the seeded administrator password.**
 5. **Schedule the backups** — see [`docs/BACKUP.md`](docs/BACKUP.md).

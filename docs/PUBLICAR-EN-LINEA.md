@@ -121,7 +121,6 @@ Antes de dar **Deploy**, abrí **Add environment variables** y cargá estas:
 |---|---|
 | `DATABASE_URL` | la del puerto **6543**, con `?pgbouncer=true&connection_limit=1` |
 | `AUTH_SECRET` | ver abajo |
-| `AUTH_URL` | el link que te dé Netlify, con `https://` |
 | `NODE_ENV` | `production` |
 
 Para el `AUTH_SECRET`, generá uno nuevo —**no uses el de tu computadora**— con
@@ -137,13 +136,6 @@ tablas ni carga datos iniciales: solo atiende a quien entra.
 
 Dale **Deploy**. La primera vez tarda unos minutos.
 
-### El `AUTH_URL` después del primer deploy
-
-Netlify te asigna un link recién cuando termina el primer despliegue. Copiálo,
-volvé a **Site configuration → Environment variables**, corregí `AUTH_URL` con
-ese valor exacto, y lanzá un deploy nuevo desde **Deploys → Trigger deploy**.
-
-Si `AUTH_URL` no coincide con el link real, el login falla sin decir por qué.
 
 ---
 
@@ -188,8 +180,9 @@ Hacelo una vez por semana como mínimo. Detalle completo en
 **El sitio muestra un error al entrar.** En Netlify, **Logs → Functions**. Casi
 siempre es una variable de entorno mal copiada.
 
-**El login devuelve al login, sin error.** `AUTH_URL` no coincide con el link
-real. Corregilo y volvé a desplegar.
+**El login devuelve al login, sin error.** Estás entrando por `http://` en vez
+de `https://`. La cookie de sesión exige conexión segura, así que el navegador
+la descarta apenas se crea. Netlify te da HTTPS: usá el link con candado.
 
 **"Can't reach database server".** La `DATABASE_URL` está mal, o le falta
 `?pgbouncer=true&connection_limit=1` al final.

@@ -53,7 +53,6 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-capital}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-capital_control}?schema=public
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env}
-      AUTH_URL: https://${APP_DOMAIN}
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@capitalcontrol.local}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
       SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Administrador}
