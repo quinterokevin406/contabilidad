@@ -60,25 +60,35 @@ const PRISMA_ONLY_PARAMS = [
   "sslcert",
 ];
 
+/**
+ * The connection a dump should use.
+ *
+ * DIRECT_URL when it exists. On a managed database the application's URL goes
+ * through a connection pooler, and a pooler is the wrong door for a backup: it
+ * hands out a different backend per transaction and it strips the libpq
+ * startup options this script used to rely on.
+ */
 function connectionString() {
-  if (!process.env.DATABASE_URL) {
+  if (!process.env.DATABASE_URL && !process.env.DIRECT_URL) {
     try {
       process.loadEnvFile(join(projectRoot, ".env"));
     } catch {
       // Falls through to the error below.
     }
   }
-  if (!process.env.DATABASE_URL) {
+
+  const raw = process.env.DIRECT_URL || process.env.DATABASE_URL;
+  if (!raw) {
     fail("DATABASE_URL is not set, and no .env file provided it.");
   }
 
   try {
-    const url = new URL(process.env.DATABASE_URL);
+    const url = new URL(raw);
     for (const param of PRISMA_ONLY_PARAMS) url.searchParams.delete(param);
     return url.toString();
   } catch {
     // Not a URL we can parse — hand it over untouched and let libpq decide.
-    return process.env.DATABASE_URL;
+    return raw;
   }
 }
 
@@ -149,7 +159,16 @@ function queryScalar(sql) {
  * looking for the problem.
  */
 function assertSystemContext() {
-  const isSystem = queryScalar("SELECT app_is_system()");
+  // Two different ways a connection can legitimately see every row, and the
+  // database decides which one applies. A declared tenant context is how a
+  // self-hosted install does it; a role carrying BYPASSRLS is how a managed
+  // Postgres such as Supabase does it — and there the pooler strips the libpq
+  // option this used to depend on, so asking only the first question would
+  // refuse a backup that is in fact complete.
+  const isSystem = queryScalar(
+    "SELECT app_is_system() OR COALESCE((SELECT rolbypassrls FROM pg_roles " +
+      "WHERE rolname = current_user), false)",
+  );
 
   if (isSystem === null) {
     fail(
@@ -185,19 +204,26 @@ function liveRowCount(table) {
 function dumpedRowCount(file, table) {
   const result = spawnSync(
     tool("pg_restore"),
-    ["--data-only", `--table=${table}`, file],
+    // -f - is not optional: without it pg_restore refuses to run at all, this
+    // returned null, and the caller read null as "nothing to check" while
+    // printing a reassuring message. The check verified nothing for weeks.
+    ["--data-only", `--table=${table}`, "-f", "-", file],
     { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
   );
   if (result.error || result.status !== 0) return null;
 
-  const lines = (result.stdout ?? "").split("\n");
+  // Split on either line ending. On Windows the terminator arrives as "\\.\r",
+  // which never equalled "\\." — so the count ran past the end of the data and
+  // swept up the footer, reporting 19 rows for a table holding 10.
+  const lines = (result.stdout ?? "").split(/\r?\n/);
   const start = lines.findIndex((line) => line.startsWith("COPY "));
   if (start === -1) return 0;
 
   let rows = 0;
   for (let i = start + 1; i < lines.length; i += 1) {
-    if (lines[i] === "\\.") break;
-    if (lines[i] !== "") rows += 1;
+    const line = lines[i];
+    if (line === undefined || line.trimEnd() === "\\.") break;
+    if (line !== "") rows += 1;
   }
   return rows;
 }
@@ -237,15 +263,25 @@ function create() {
 
   if (expected !== null && expected > 0) {
     const dumped = dumpedRowCount(file, "clients");
-    if (dumped !== null && dumped !== expected) {
+
+    // Being unable to check is not the same as checking and passing. Claiming
+    // "verified" when nothing was read is the exact failure this guard exists
+    // to prevent, so it reports which of the two actually happened.
+    if (dumped === null) {
+      console.log(
+        "Could NOT verify this backup: pg_restore returned no data.\n" +
+          "The file was written; check it yourself before trusting it.",
+      );
+    } else if (dumped !== expected) {
       fail(
         "The backup is incomplete. It has been left in place for inspection:\n" +
           `  ${file}\n\n` +
           `The database holds ${expected} clients; the dump contains ${dumped}.\n` +
           "Do NOT rely on this file.",
       );
+    } else {
+      console.log(`Verified: ${dumped} clients read back from the dump.`);
     }
-    console.log(`Verified: ${expected} clients present in the dump.`);
   }
 
   const size = statSync(file).size;

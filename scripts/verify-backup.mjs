@@ -59,7 +59,7 @@ const output = `${created.stdout ?? ""}${created.stderr ?? ""}`;
 check("el backup se completó", created.status === 0);
 check(
   "informa cuántos clientes quedaron adentro",
-  /Verified: \d+ clients present in the dump/.test(output),
+  /Verified: \d+ clients read back from the dump/.test(output),
   output.match(/Verified: \d+ clients[^\n]*/)?.[0] ?? "no lo informó",
 );
 
