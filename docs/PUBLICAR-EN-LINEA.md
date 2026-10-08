@@ -200,6 +200,11 @@ equivocado. Tiene que ser la del **6543**.
 **Todo andaba y de golpe no.** Fijate en Supabase si el proyecto quedó pausado
 por inactividad. Se reactiva con un botón.
 
+**Cannot find module '@tailwindcss/postcss'** al compilar. En Netlify,
+`NODE_ENV=production` también le dice a npm que no instale las dependencias de
+desarrollo, y el build necesita varias. El `netlify.toml` del proyecto ya trae
+`NPM_FLAGS = "--include=dev"` para eso.
+
 ---
 
 ## Para actualizar el sistema

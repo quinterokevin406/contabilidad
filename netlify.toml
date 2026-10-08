@@ -14,5 +14,15 @@
 [build.environment]
   NODE_VERSION = "24"
 
+  # NODE_ENV=production is set as a site variable because the application needs
+  # it at run time: it is what makes the session cookie require HTTPS. But on
+  # Netlify that same variable also tells npm to skip devDependencies, and this
+  # build needs several of them — Tailwind compiles the stylesheet, TypeScript
+  # compiles the app, and the Next.js runtime plugin itself lives there.
+  #
+  # Without this flag the build dies on "Cannot find module
+  # '@tailwindcss/postcss'", which names a symptom three steps from the cause.
+  NPM_FLAGS = "--include=dev"
+
 [[plugins]]
   package = "@netlify/plugin-nextjs"
