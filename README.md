@@ -364,6 +364,29 @@ outstanding capital. Hiding a debtor is not tidying up, it is losing a debt —
 the balance would keep counting in the portfolio while the person who owes it is
 nowhere in the interface.
 
+### Test data, and the one place deletion exists
+
+Everybody makes a few entries in the first hour. Those are not evidence of
+anything, so there is a command — and deliberately not a button — to remove
+them:
+
+```bash
+npm run client:purge -- CL-000003           # shows what would go
+npm run client:purge -- CL-000003 --force   # does it
+```
+
+It refuses the moment there is real history: any payment received, any renewal,
+settlement or reversal, any cash movement that is not the loan's own
+disbursement. Then the right answer is to archive, and the refusal says so.
+
+Keeping it out of the application is the point. `verify:no-deletion` reads the
+source on every run and fails if any code the application serves can delete a
+financial record, so that guarantee stays literally true; this needs shell
+access to the server, which whoever owns the installation has and nobody else
+does. `verify:purge` checks the other half — that the cash position after a
+purge is the number it was before, because the disbursement being removed is
+money that never actually left.
+
 ### The platform operator is not an administrator
 
 `ADMIN` is the role every customer's own administrator holds, so it can never
@@ -456,7 +479,7 @@ on the 24th is due on the 24th in Bogotá regardless of where the server sits.
 npm run db:test   # builds a throwaway database seeded with demo data
 npm test          # 272 unit tests of the financial engine
 npm run typecheck
-npm run verify    # everything above, plus fourteen integration checks
+npm run verify    # everything above, plus fifteen integration checks
 ```
 
 `db:test` is a prerequisite and only has to be run once. The integration checks

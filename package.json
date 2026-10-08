@@ -23,7 +23,7 @@
     "db:psql": "node scripts/pg.mjs psql",
     "verify:ledger": "tsx --conditions=react-server --env-file=.env.test scripts/verify-client-detail.mts",
     "verify:payments": "tsx --conditions=react-server --env-file=.env.test scripts/verify-payment-flow.mts",
-    "verify": "npm run test && npm run typecheck && npm run verify:ledger && npm run verify:payments && npm run verify:lifecycle && npm run verify:cash && npm run verify:collections && npm run verify:analytics && npm run verify:reports && npm run verify:reversals && npm run verify:tenancy && npm run verify:platform && npm run verify:backup && npm run verify:billing && npm run verify:no-deletion && npm run verify:archive",
+    "verify": "npm run test && npm run typecheck && npm run verify:ledger && npm run verify:payments && npm run verify:lifecycle && npm run verify:cash && npm run verify:collections && npm run verify:analytics && npm run verify:reports && npm run verify:reversals && npm run verify:tenancy && npm run verify:platform && npm run verify:backup && npm run verify:billing && npm run verify:no-deletion && npm run verify:archive && npm run verify:purge",
     "verify:lifecycle": "tsx --conditions=react-server --env-file=.env.test scripts/verify-lifecycle.mts",
     "verify:cash": "tsx --conditions=react-server --env-file=.env.test scripts/verify-cash.mts",
     "verify:collections": "tsx --conditions=react-server --env-file=.env.test scripts/verify-collections.mts",
@@ -44,7 +44,9 @@
     "verify:billing": "tsx --conditions=react-server --env-file=.env.test scripts/verify-billing.mts",
     "user:password": "tsx --conditions=react-server --env-file=.env scripts/reset-password.mts",
     "verify:no-deletion": "node scripts/verify-no-deletion.mjs",
-    "verify:archive": "tsx --conditions=react-server --env-file=.env.test scripts/verify-archive.mts"
+    "verify:archive": "tsx --conditions=react-server --env-file=.env.test scripts/verify-archive.mts",
+    "client:purge": "tsx --conditions=react-server --env-file=.env scripts/purge-test-client.mts",
+    "verify:purge": "tsx --conditions=react-server --env-file=.env.test scripts/verify-purge.mts"
   },
   "dependencies": {
     "@date-fns/tz": "^1.5.0",
