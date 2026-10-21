@@ -14,6 +14,7 @@ import { Money } from "@/core/money/money";
 import { todayIn } from "@/core/time/calendar-date";
 import { fromDb } from "@/infra/db/money";
 import { createSystemClient } from "@/infra/db/system-client";
+import { accrueLoan } from "@/services/loans/accrue";
 import { postPayment } from "@/services/payments/post-payment";
 
 if (!process.env.DATABASE_URL) process.loadEnvFile(".env");
@@ -102,10 +103,32 @@ async function main() {
   await inRolledBackTx(async (tx) => {
     const before = await tx.cashMovement.count({ where: { organizationId: org.id } });
 
+    // Accrue BEFORE measuring. postPayment accrues as its first step, so a
+    // figure read outside this transaction is already stale by the time the
+    // payment lands — any period that fell due in between is interest the
+    // reading never saw. Measuring here makes the expectation and the payment
+    // look at the same debt.
+    await accrueLoan(tx, target.id, today);
+
+    const open: any[] = await tx.loanPeriod.findMany({
+      where: { loanId: target.id, status: { in: ["PENDING", "PARTIALLY_PAID"] } },
+      select: { interestAccrued: true, interestPaid: true, interestWaived: true },
+    });
+    const owed = open.reduce(
+      (acc: Money, p: any) =>
+        acc.plus(
+          fromDb(p.interestAccrued)
+            .minus(fromDb(p.interestPaid))
+            .minus(fromDb(p.interestWaived)),
+        ),
+      Money.zero(),
+    );
+    const payment = owed.plus("100000");
+
     const result = await postPayment(tx, {
       organizationId: org.id,
       loanId: target.id,
-      amount,
+      amount: payment,
       paidOn: today,
       actor: { userId: admin.id, email: admin.email },
       settings: SETTINGS,
@@ -113,8 +136,8 @@ async function main() {
 
     check(
       "el pago se aplicó primero a interés",
-      result.plan.interestTotal.equals(owedInterest),
-      `${result.plan.interestTotal.toDatabaseString()} de ${owedInterest.toDatabaseString()}`,
+      result.plan.interestTotal.equals(owed),
+      `${result.plan.interestTotal.toDatabaseString()} de ${owed.toDatabaseString()}`,
     );
     check(
       "el excedente fue a capital",
@@ -132,8 +155,8 @@ async function main() {
     );
     check(
       "las allocations suman exactamente el pago",
-      allocSum.equals(amount),
-      `${allocSum.toDatabaseString()} vs ${amount.toDatabaseString()}`,
+      allocSum.equals(payment),
+      `${allocSum.toDatabaseString()} vs ${payment.toDatabaseString()}`,
     );
     check(
       "toda allocation de interés apunta a un período",

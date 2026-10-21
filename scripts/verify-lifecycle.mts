@@ -106,7 +106,9 @@ async function main() {
     const result = await renewLoan(tx, {
       organizationId: org.id,
       loanId: target.id,
-      interestPaid: owedInterest,
+      // Measured after accruing, inside this transaction: a figure read
+      // outside is already stale if a period fell due in between.
+      interestPaid: await accrueAndOwed(tx, target.id, today),
       capitalChange: { kind: "UNCHANGED" },
       effectiveOn: today,
       actor,
@@ -157,7 +159,9 @@ async function main() {
     const result = await renewLoan(tx, {
       organizationId: org.id,
       loanId: target.id,
-      interestPaid: owedInterest,
+      // Measured after accruing, inside this transaction: a figure read
+      // outside is already stale if a period fell due in between.
+      interestPaid: await accrueAndOwed(tx, target.id, today),
       capitalChange: { kind: "INCREASE", additionalDisbursed: "500000" },
       effectiveOn: today,
       actor,
@@ -201,7 +205,9 @@ async function main() {
     const first = await renewLoan(tx, {
       organizationId: org.id,
       loanId: target.id,
-      interestPaid: owedInterest,
+      // Measured after accruing, inside this transaction: a figure read
+      // outside is already stale if a period fell due in between.
+      interestPaid: await accrueAndOwed(tx, target.id, today),
       capitalChange: { kind: "UNCHANGED" },
       effectiveOn: today,
       actor,

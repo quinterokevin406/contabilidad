@@ -21,6 +21,7 @@ import { todayIn } from "@/core/time/calendar-date";
 import { PrismaClient } from "@/generated/prisma";
 import { fromDb } from "@/infra/db/money";
 import { createSystemClient } from "@/infra/db/system-client";
+import { accrueLoan } from "@/services/loans/accrue";
 import { postPayment } from "@/services/payments/post-payment";
 import { reversePayment } from "@/services/reversals/reverse-payment";
 
@@ -93,12 +94,22 @@ async function main() {
   console.log("1. Un pago y su anulación");
 
   const roundTrip = await inRolledBackTx(async (tx) => {
+    // Accrue BEFORE the snapshot. postPayment accrues as its first step, and a
+    // reversal does NOT undo that — the interest genuinely fell due, the
+    // payment merely stopped covering it. Photographing the loan first would
+    // compare the restored balance against a debt that no longer existed.
+    await accrueLoan(tx, target.id, today);
+
     const before = await snapshotLoan(tx, target.id);
+
+    // Enough to clear the interest and still reach capital, so the reversal
+    // has two financial classes to put back rather than one.
+    const amount = before.interest.plus("350000");
 
     const payment = await postPayment(tx, {
       organizationId: org.id,
       loanId: target.id,
-      amount: PAYMENT_AMOUNT,
+      amount,
       paidOn: today,
       actor,
       settings: SETTINGS,
@@ -161,7 +172,7 @@ async function main() {
       mirrored,
       refusedTwice,
       reversal,
-      paymentAmount: PAYMENT_AMOUNT,
+      paymentAmount: amount,
     };
   });
 

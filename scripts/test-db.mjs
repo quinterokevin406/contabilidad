@@ -37,16 +37,46 @@ function tool(name) {
   return existsSync(portable) ? portable : binary;
 }
 
-process.loadEnvFile(join(projectRoot, ".env"));
+/**
+ * Where the throwaway database lives.
+ *
+ * Reuses an existing .env.test when there is one, because once this has been
+ * set up the project's own .env may well have moved on to a managed database
+ * in production — and deriving the scratch database from THAT would try to
+ * create one next to the real thing.
+ */
+const existing = join(projectRoot, ".env.test");
+let sourceUrl;
 
-if (!process.env.DATABASE_URL) fail("DATABASE_URL is not set in .env");
-
-const source = new URL(process.env.DATABASE_URL);
-const testName = `${source.pathname.slice(1)}_test`;
-
-if (source.pathname.slice(1).endsWith("_test")) {
-  fail("DATABASE_URL already points at a test database. Refusing to nest one.");
+if (existsSync(existing)) {
+  process.loadEnvFile(existing);
+  sourceUrl = process.env.DATABASE_URL;
+  console.log("Reusing the database named in .env.test");
+} else {
+  process.loadEnvFile(join(projectRoot, ".env"));
+  sourceUrl = process.env.DATABASE_URL;
 }
+
+if (!sourceUrl) fail("DATABASE_URL is not set.");
+
+const source = new URL(sourceUrl);
+
+// A scratch database is created, dropped and filled with demo data. Doing that
+// on a managed host is one typo away from doing it to the real one, and a
+// production database is not the place to find out.
+const LOCAL = ["localhost", "127.0.0.1", "::1"];
+if (!LOCAL.includes(source.hostname)) {
+  fail(
+    "The database for the verification suite must be local, and this one is " +
+      `at ${source.hostname}.\n\n` +
+      "Creating a scratch database next to a real one is not worth the risk.\n" +
+      "Point .env.test at a PostgreSQL on this machine and run it again.",
+  );
+}
+
+const testName = source.pathname.slice(1).endsWith("_test")
+  ? source.pathname.slice(1)
+  : `${source.pathname.slice(1)}_test`;
 
 const target = new URL(source.toString());
 target.pathname = `/${testName}`;
