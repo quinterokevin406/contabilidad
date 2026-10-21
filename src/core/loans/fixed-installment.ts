@@ -54,20 +54,23 @@ export interface Installment {
 export interface FixedInstallmentPlan {
   /** What the lender hands over on day one. */
   principal: Money;
-  /** Earnings over the whole term, known before the first payment. */
+  /** The clean figure the rate produces, before the instalment is rounded. */
+  nominalInterest: Money;
+  /** What is actually earned once the instalment is rounded up. */
   totalInterest: Money;
-  /** principal + totalInterest. */
+  /** principal + totalInterest, and also installment × periods. */
   totalRepaid: Money;
-  /** The round figure that is quoted and paid every period but the last. */
+  /** The round figure quoted and paid EVERY period, the last one included. */
   installment: Money;
   /**
-   * The last one, which absorbs whatever rounding left over.
+   * What rounding the instalment up added to the earnings.
    *
-   * Rounding 1.960.000 ÷ 6 up to the hundred gives 326.700, and six of those
-   * collect 200 pesos more than was agreed. Rather than quietly overcharge, the
-   * difference lands here and the totals come out exact.
+   * 1.960.000 ÷ 6 is 326.666,67, and a lender quotes 326.700. Six of those
+   * collect 200 pesos more than the rate alone produced. That is not hidden:
+   * the agreed total is what the six instalments add up to, and this is the
+   * difference, shown so nobody has to work it out.
    */
-  lastInstallment: Money;
+  roundingGain: Money;
   schedule: Installment[];
 }
 
@@ -96,49 +99,56 @@ export function planFixedInstallments(
   // Interest on the ORIGINAL principal, for every period of the term. This one
   // line is the whole difference from an amortised loan.
   const interestPerPeriod = principal.percentOf(terms.ratePercent);
-  const totalInterest = interestPerPeriod.times(terms.periods);
-  const totalRepaid = principal.plus(totalInterest);
+  const nominalInterest = interestPerPeriod.times(terms.periods);
 
-  // The quoted instalment: a figure that can be said out loud and written on a
-  // card. Rounded DOWN so the rounding never collects more than was agreed —
-  // what is left over is settled in the last one.
-  const installment = totalRepaid
-    .dividedBy(terms.periods)
-    .quantize(terms.installmentQuantum, "DOWN");
+  // The quoted instalment, rounded UP: a lender says "326.700", never
+  // "326.666,67", and never a figure below what the rate produced. Rounding up
+  // is what makes every instalment identical — there is no odd last one to
+  // explain to a client holding a payment card.
+  const exact = principal.plus(nominalInterest).dividedBy(terms.periods);
 
-  if (!installment.isPositive()) {
+  // A rounding step bigger than the instalment itself stops being rounding and
+  // becomes the price: at a quantum of 1.000.000, a 326.667 instalment would
+  // jump to a million and the client would repay six times what they owe.
+  // Rounding may add at most one step per instalment, never reshape the loan.
+  if (Money.of(terms.installmentQuantum).greaterThan(exact)) {
     throw new FixedInstallmentError(
-      "La cuota redondeada da cero. Usá un redondeo más fino.",
+      "El redondeo es más grande que la cuota misma y cambiaría el préstamo " +
+        "entero. Elegí uno más fino.",
     );
   }
 
-  const lastInstallment = totalRepaid.minus(installment.times(terms.periods - 1));
+  const installment = exact.quantize(terms.installmentQuantum, "UP");
 
-  // Each instalment carries the same interest, because the interest never
-  // depended on the outstanding balance. The capital inside it is whatever is
-  // left of the payment.
+  // The agreed total is what the instalments add up to, not the other way
+  // round. That is how the deal is actually struck: six of these.
+  const totalRepaid = installment.times(terms.periods);
+  const totalInterest = totalRepaid.minus(principal);
+  const roundingGain = totalInterest.minus(nominalInterest);
+
+  // Capital is what has to come back exactly: the lender handed over a
+  // million and a million is what returns. So the capital column is split
+  // first, the remainder landing in the last instalment, and interest is
+  // whatever each payment has left over. Doing it the other way round would
+  // recover more or less principal than was lent, and the portfolio would be
+  // wrong from the first day.
+  const capitalPerPeriod = principal
+    .dividedBy(terms.periods)
+    .quantize(terms.installmentQuantum, "DOWN");
+
   const schedule: Installment[] = [];
   let principalPaid = Money.zero();
-  let interestPaid = Money.zero();
 
   for (let i = 1; i <= terms.periods; i += 1) {
     const last = i === terms.periods;
-    const amount = last ? lastInstallment : installment;
+    const capital = last ? principal.minus(principalPaid) : capitalPerPeriod;
+    const interest = installment.minus(capital);
 
-    // The final period absorbs the rounding on both halves, so the columns add
-    // up to the agreed totals exactly rather than to within a few pesos.
-    const interest = last
-      ? totalInterest.minus(interestPaid)
-      : interestPerPeriod.quantize(terms.installmentQuantum, "DOWN");
-
-    const capital = last ? principal.minus(principalPaid) : amount.minus(interest);
-
-    interestPaid = interestPaid.plus(interest);
     principalPaid = principalPaid.plus(capital);
 
     schedule.push({
       number: i,
-      amount,
+      amount: installment,
       interest,
       principal: capital,
       principalRemaining: principal.minus(principalPaid),
@@ -147,10 +157,11 @@ export function planFixedInstallments(
 
   return {
     principal,
+    nominalInterest,
     totalInterest,
     totalRepaid,
     installment,
-    lastInstallment,
+    roundingGain,
     schedule,
   };
 }
