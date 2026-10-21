@@ -65,6 +65,15 @@ const ALLOWED = new Map([
   ],
 ]);
 
+/**
+ * The single file allowed to delete a financial row.
+ *
+ * Opening this door is only safe while the door itself is checked, so the
+ * second section below asserts that this service still refuses a client who
+ * has received a payment. An allowlist without that check is just a hole.
+ */
+const PURGE_SERVICE = "src/services/clients/purge-client.ts";
+
 let failures = 0;
 
 function check(label, pass, detail = "") {
@@ -109,7 +118,10 @@ for (const root of ROOTS) {
   }
 }
 
-const violations = found.filter((f) => PROTECTED.includes(f.model));
+const violations = found.filter(
+  (f) => PROTECTED.includes(f.model) && f.file !== PURGE_SERVICE,
+);
+const inPurge = found.filter((f) => f.file === PURGE_SERVICE);
 const permitted = found.filter((f) => ALLOWED.has(f.model));
 const unknown = found.filter(
   (f) => !PROTECTED.includes(f.model) && !ALLOWED.has(f.model),
@@ -123,6 +135,12 @@ check(
     : violations
         .map((v) => `${v.file}:${v.line} → ${v.model}.${v.operation}()`)
         .join("; "),
+);
+
+check(
+  "el único borrado vive en el servicio de purga",
+  inPurge.length > 0,
+  `${inPurge.length} operación(es) en ${PURGE_SERVICE}`,
 );
 
 for (const item of permitted) {
@@ -159,6 +177,38 @@ check(
 check(
   "y marca el original en vez de borrarlo",
   reversalSource.includes('"REVERSED"'),
+);
+
+// --- The door is only safe while its lock is checked ---------------------
+
+console.log("\n3. El único borrado permitido sigue teniendo sus frenos");
+
+const purge = readFileSync(join(projectRoot, PURGE_SERVICE), "utf8");
+
+check(
+  "se niega cuando el cliente ya recibió pagos",
+  purge.includes("_count.payments > 0") || purge.includes("payments > 0"),
+);
+check(
+  "se niega cuando hay renovaciones",
+  /renewals\s*>\s*0/.test(purge),
+);
+check(
+  "se niega cuando hay liquidaciones",
+  /settlements\s*>\s*0/.test(purge),
+);
+check(
+  "se niega con movimientos que no sean el desembolso",
+  purge.includes("LOAN_DISBURSEMENT"),
+);
+check(
+  "vuelve a revisar las reglas dentro de la transacción",
+  purge.includes("const preview = await previewPurge(tx"),
+  "no alcanza con haberlas revisado al mostrar el diálogo",
+);
+check(
+  "deja constancia en el historial de lo que borró",
+  purge.includes("auditLog.create"),
 );
 
 console.log(

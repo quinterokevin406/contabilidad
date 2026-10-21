@@ -24,6 +24,7 @@ import { todayIn } from "@/core/time/calendar-date";
 
 import { NewLoanButton } from "../../prestamos/new-loan-dialog";
 import { ArchiveClientButton } from "./archive-dialog";
+import { DeleteClientButton } from "./delete-dialog";
 import {
   getClientDetail,
   type TimelineEvent,
@@ -108,11 +109,17 @@ export default async function ClientDetailPage({
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {user.role === "ADMIN" && (
-            <ArchiveClientButton
-              clientId={client.id}
-              clientName={client.fullName}
-              archived={client.archivedAt !== null}
-            />
+            <>
+              <ArchiveClientButton
+                clientId={client.id}
+                clientName={client.fullName}
+                archived={client.archivedAt !== null}
+              />
+              <DeleteClientButton
+                clientId={client.id}
+                clientCode={client.code}
+              />
+            </>
           )}
           {client.whatsappPhone && (
             <WhatsAppButton

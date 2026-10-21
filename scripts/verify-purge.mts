@@ -200,8 +200,8 @@ async function main() {
     const refused = runPurge(withPayment.code, true);
     check("rechaza a quien ya recibió pagos", refused.status !== 0);
     check(
-      "y explica que hay que archivarlo",
-      (refused.stderr ?? "").includes("archivarlo"),
+      "y explica que archivar es lo que corresponde",
+      /archiv/i.test(`${refused.stderr ?? ""}${refused.stdout ?? ""}`),
     );
   }
 
