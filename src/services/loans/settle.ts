@@ -1,4 +1,6 @@
-import { projectPeriod } from "@/core/loans/accrual";
+import type Decimal from "decimal.js";
+
+import { projectPeriod, type AccrualLoan } from "@/core/loans/accrual";
 import {
   planSettlement,
   quoteSettlement,
@@ -68,6 +70,13 @@ export interface LoanSettlementQuote {
     fullInterest: Money;
     principalBasis: Money;
     rateApplied: string;
+    /**
+     * Set when the period already exists as a row, which is the case on a
+     * closed term: its instalments were written when the loan was created.
+     * Null on an open-ended loan, where the period is still only a projection
+     * and settling is what brings it into being.
+     */
+    periodId: string | null;
   } | null;
 }
 
@@ -109,6 +118,7 @@ export async function quoteLoanSettlement(
       scheduleAnchorOn: true,
       scheduleAnchorIndex: true,
       lastPeriodIndex: true,
+      repaymentPlan: true,
       client: { select: { fullName: true } },
       periods: {
         where: { status: { in: ["PENDING", "PARTIALLY_PAID"] } },
@@ -142,8 +152,126 @@ export async function quoteLoanSettlement(
 
   const outstandingPrincipal = fromDb(loan.outstandingPrincipal);
 
-  // The period in progress: a projection, never a stored row — until the
+  // The period in progress.
+  //
+  // An open-ended loan has no row for it — periods are invented as they fall
+  // due — so it is projected here, and materialized below only if the
   // settlement decides to charge for it.
+  //
+  // A fixed-instalment loan is the opposite: the next instalment is already a
+  // row, written when the loan was created and still SCHEDULED because it has
+  // not reached its due date. Projecting a period past the end of a closed term
+  // would invent a seventh instalment on a six-instalment loan.
+  const running =
+    loan.repaymentPlan === "FIXED_INSTALLMENTS"
+      ? await nextScheduledInstallment(tx, loan.id)
+      : projectedRunningPeriod(loan, outstandingPrincipal, money);
+
+  const policy = input.openPeriodPolicyOverride ?? loan.openPeriodPolicy;
+
+  const quote = quoteSettlement({
+    principalOutstanding: outstandingPrincipal,
+    accruedInterestOutstanding,
+    openPeriod: running
+      ? {
+          startsOn: running.startsOn,
+          dueOn: running.dueOn,
+          fullPeriodInterest: running.fullInterest,
+        }
+      : null,
+    openPeriodPolicy: policy,
+    asOf: input.asOf,
+    additionalCharges: input.additionalCharges,
+    money,
+  });
+
+  return {
+    quote,
+    loanCode: loan.code,
+    clientName: loan.client.fullName,
+    openPeriod:
+      running && quote.openPeriodCharge.isPositive()
+        ? {
+            periodIndex: running.periodIndex,
+            startsOn: running.startsOn,
+            dueOn: running.dueOn,
+            fullInterest: running.fullInterest,
+            principalBasis: running.principalBasis,
+            rateApplied: running.rateApplied,
+            periodId: running.periodId,
+          }
+        : null,
+  };
+}
+
+/** The period in progress, however the loan happens to hold it. */
+interface RunningPeriod {
+  periodIndex: number;
+  startsOn: CalendarDate;
+  dueOn: CalendarDate;
+  fullInterest: Money;
+  principalBasis: Money;
+  rateApplied: string;
+  /** Null when the period is only a projection and has no row yet. */
+  periodId: string | null;
+}
+
+/**
+ * The next instalment of a closed term: already agreed, not yet due.
+ *
+ * Null once every instalment has matured, which is the case of a client who
+ * reached the end of the term still owing money. There is no period in progress
+ * then, so closing the loan carries no extra charge for one.
+ */
+async function nextScheduledInstallment(
+  tx: Tx,
+  loanId: string,
+): Promise<RunningPeriod | null> {
+  const period = await tx.loanPeriod.findFirst({
+    where: { loanId, status: "SCHEDULED" },
+    orderBy: { periodIndex: "asc" },
+    select: {
+      id: true,
+      periodIndex: true,
+      startsOn: true,
+      dueOn: true,
+      interestAccrued: true,
+      principalBasis: true,
+      rateApplied: true,
+    },
+  });
+
+  if (!period) return null;
+
+  return {
+    periodIndex: period.periodIndex,
+    startsOn: fromPrismaDate(period.startsOn),
+    dueOn: fromPrismaDate(period.dueOn),
+    // What the schedule says this instalment earns. Not recomputed: it was
+    // fixed when the loan was written, and this row is the record of it.
+    fullInterest: fromDb(period.interestAccrued),
+    principalBasis: fromDb(period.principalBasis),
+    rateApplied: period.rateApplied.toFixed(),
+    periodId: period.id,
+  };
+}
+
+/** The period in progress on an open-ended loan: a projection, never a row. */
+function projectedRunningPeriod(
+  loan: {
+    scheduleAnchorOn: Date;
+    scheduleAnchorIndex: number;
+    lastPeriodIndex: number;
+    periodicity: AccrualLoan["schedule"]["periodicity"];
+    periodAnchor: AccrualLoan["schedule"]["anchor"];
+    customPeriodDays: number | null;
+    interestMethod: AccrualLoan["interestMethod"];
+    ratePercent: Decimal;
+    currentPrincipalBase: Decimal;
+  },
+  outstandingPrincipal: Money,
+  money: AccrualLoan["money"],
+): RunningPeriod {
   const projection = projectPeriod(
     {
       anchorDueOn: fromPrismaDate(loan.scheduleAnchorOn),
@@ -165,36 +293,14 @@ export async function quoteLoanSettlement(
     loan.lastPeriodIndex + 1,
   );
 
-  const policy = input.openPeriodPolicyOverride ?? loan.openPeriodPolicy;
-
-  const quote = quoteSettlement({
-    principalOutstanding: outstandingPrincipal,
-    accruedInterestOutstanding,
-    openPeriod: {
-      startsOn: projection.startsOn,
-      dueOn: projection.dueOn,
-      fullPeriodInterest: projection.interest,
-    },
-    openPeriodPolicy: policy,
-    asOf: input.asOf,
-    additionalCharges: input.additionalCharges,
-    money,
-  });
-
   return {
-    quote,
-    loanCode: loan.code,
-    clientName: loan.client.fullName,
-    openPeriod: quote.openPeriodCharge.isPositive()
-      ? {
-          periodIndex: loan.lastPeriodIndex + 1,
-          startsOn: projection.startsOn,
-          dueOn: projection.dueOn,
-          fullInterest: projection.interest,
-          principalBasis: projection.basis,
-          rateApplied: loan.ratePercent.toFixed(),
-        }
-      : null,
+    periodIndex: loan.lastPeriodIndex + 1,
+    startsOn: projection.startsOn,
+    dueOn: projection.dueOn,
+    fullInterest: projection.interest,
+    principalBasis: projection.basis,
+    rateApplied: loan.ratePercent.toFixed(),
+    periodId: null,
   };
 }
 
@@ -267,6 +373,7 @@ export async function settleLoan(
       clientId: true,
       lastPeriodIndex: true,
       openPeriodPolicy: true,
+      repaymentPlan: true,
       client: { select: { fullName: true } },
     },
   });
@@ -276,33 +383,55 @@ export async function settleLoan(
   let openPeriodId: string | null = null;
 
   if (openPeriod && quote.openPeriodCharge.isPositive()) {
-    const created = await tx.loanPeriod.create({
-      data: {
-        organizationId: input.organizationId,
-        loanId: loan.id,
-        periodIndex: openPeriod.periodIndex,
-        startsOn: toPrismaDate(openPeriod.startsOn),
-        dueOn: toPrismaDate(openPeriod.dueOn),
-        principalBasis: toDb(openPeriod.principalBasis),
-        rateApplied: rateToDb(openPeriod.rateApplied),
-        // The CHARGE, which under a prorated policy is less than a full period.
-        interestAccrued: toDb(quote.openPeriodCharge),
-        interestPaid: toDb(Money.zero()),
-        interestWaived: toDb(Money.zero()),
-        status: "PENDING",
-        accruedAt: new Date(),
-      },
-      select: { id: true },
-    });
-    openPeriodId = created.id;
+    if (openPeriod.periodId) {
+      // A closed term already has the row; it was agreed when the loan was
+      // written. Settling brings it forward: it becomes owed now instead of on
+      // its due date. The interest is overwritten with the CHARGE, which only
+      // differs from the agreed figure under a prorated policy, and the policy
+      // actually applied is recorded on the Settlement row either way.
+      await tx.loanPeriod.update({
+        where: { id: openPeriod.periodId },
+        data: {
+          interestAccrued: toDb(quote.openPeriodCharge),
+          status: "PENDING",
+          accruedAt: new Date(),
+        },
+      });
+      openPeriodId = openPeriod.periodId;
 
-    await tx.loan.update({
-      where: { id: loan.id },
-      data: {
-        lastPeriodIndex: openPeriod.periodIndex,
-        lastAccruedAt: new Date(),
-      },
-    });
+      await tx.loan.update({
+        where: { id: loan.id },
+        data: { lastAccruedAt: new Date() },
+      });
+    } else {
+      const created = await tx.loanPeriod.create({
+        data: {
+          organizationId: input.organizationId,
+          loanId: loan.id,
+          periodIndex: openPeriod.periodIndex,
+          startsOn: toPrismaDate(openPeriod.startsOn),
+          dueOn: toPrismaDate(openPeriod.dueOn),
+          principalBasis: toDb(openPeriod.principalBasis),
+          rateApplied: rateToDb(openPeriod.rateApplied),
+          // The CHARGE, which under a prorated policy is less than a full period.
+          interestAccrued: toDb(quote.openPeriodCharge),
+          interestPaid: toDb(Money.zero()),
+          interestWaived: toDb(Money.zero()),
+          status: "PENDING",
+          accruedAt: new Date(),
+        },
+        select: { id: true },
+      });
+      openPeriodId = created.id;
+
+      await tx.loan.update({
+        where: { id: loan.id },
+        data: {
+          lastPeriodIndex: openPeriod.periodIndex,
+          lastAccruedAt: new Date(),
+        },
+      });
+    }
   }
 
   const openPeriods = await tx.loanPeriod.findMany({
@@ -418,10 +547,52 @@ export async function settleLoan(
     });
   }
 
-  // --- Write-off: close what was not collected ----------------------------
-
+  // --- Instalments the client will now never reach ------------------------
+  //
+  // Closing a fixed-instalment loan early is the whole reason this product
+  // needs a settlement at all. The client pays the capital still owed plus the
+  // period in progress, and the instalments after that are forgiven — the
+  // interest on them was agreed, but it is interest on months the client is no
+  // longer borrowing for.
+  //
+  // Forgiven is not the same as forgotten. Each of those periods is WAIVED with
+  // the amount on the row, so the loan can always answer what was given up and
+  // the figure appears as waived interest rather than vanishing. Nothing is
+  // deleted, and profit is untouched: interest enters a result when it is
+  // collected, so interest that never arrived was never in one.
   let interestWaived = Money.zero();
   let principalWrittenOff = Money.zero();
+
+  if (loan.repaymentPlan === "FIXED_INSTALLMENTS") {
+    const unreached = await tx.loanPeriod.findMany({
+      where: { loanId: loan.id, status: "SCHEDULED" },
+      select: {
+        id: true,
+        interestAccrued: true,
+        interestPaid: true,
+        interestWaived: true,
+      },
+    });
+
+    for (const period of unreached) {
+      const owed = fromDb(period.interestAccrued)
+        .minus(fromDb(period.interestPaid))
+        .minus(fromDb(period.interestWaived));
+
+      interestWaived = interestWaived.plus(Money.max(Money.zero(), owed));
+
+      await tx.loanPeriod.update({
+        where: { id: period.id },
+        data: {
+          ...(owed.isPositive()
+            ? { interestWaived: { increment: owed.toDatabaseString() } }
+            : {}),
+          status: "WAIVED",
+          settledAt: new Date(),
+        },
+      });
+    }
+  }
 
   if (input.kind === "WRITE_OFF") {
     // Interest that will never arrive is waived on its period rows. It costs

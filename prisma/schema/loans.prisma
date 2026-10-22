@@ -54,6 +54,31 @@ model Loan {
   /// Copied from settings at creation time so rounding is reproducible forever.
   moneyQuantum       Decimal @db.Decimal(18, 2)
 
+  // --- Repayment plan -----------------------------------------------------
+
+  repaymentPlan RepaymentPlan @default(OPEN_ENDED)
+
+  /// FIXED_INSTALLMENTS only: how many instalments the term was agreed in.
+  /// Null on an open-ended loan, which has no end.
+  termPeriods Int?
+
+  /// FIXED_INSTALLMENTS only: the round figure quoted and collected EVERY
+  /// period, the last one included. Stored rather than derived because it is
+  /// what the client was told, and a rounding default changing tomorrow must
+  /// never restate it.
+  installmentAmount Decimal? @db.Decimal(18, 2)
+
+  /// FIXED_INSTALLMENTS only: installmentAmount x termPeriods. The figure the
+  /// client agreed to repay in total. Note this is the AGREED total, not a
+  /// prediction: it is what the instalments add up to, including the few pesos
+  /// that rounding each instalment up adds.
+  agreedTotal Decimal? @db.Decimal(18, 2)
+
+  /// FIXED_INSTALLMENTS only: the quantum the instalment itself was rounded to,
+  /// which is coarser than moneyQuantum (a lender quotes 326.700, not
+  /// 326.666,67). Kept so the schedule can be reproduced exactly.
+  installmentQuantum Decimal? @db.Decimal(18, 2)
+
   // --- Schedule -----------------------------------------------------------
 
   /// Date-only values, stored at UTC midnight and always rendered in the
@@ -140,6 +165,16 @@ model LoanPeriod {
   interestPaid    Decimal @db.Decimal(18, 2) @default(0)
   /// Interest closed administratively rather than collected.
   interestWaived  Decimal @db.Decimal(18, 2) @default(0)
+
+  /// FIXED_INSTALLMENTS only: the capital this instalment was scheduled to
+  /// return. Zero on an open-ended loan, where capital is owed as a single
+  /// balance and not sliced per period.
+  ///
+  /// This is a RECORD of the agreed schedule, not the authority on the
+  /// balance. Capital owed is always Loan.outstandingPrincipal, reduced by
+  /// PRINCIPAL allocations. A client who pays two instalments at once moves
+  /// capital faster than this column says, and that is allowed.
+  principalDue Decimal @db.Decimal(18, 2) @default(0)
 
   status LoanPeriodStatus @default(SCHEDULED)
 

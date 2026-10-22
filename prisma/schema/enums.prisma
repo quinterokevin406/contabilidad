@@ -37,6 +37,24 @@ enum InterestMethod {
   SIMPLE_ON_OUTSTANDING_PRINCIPAL
 }
 
+/// Whether the loan has a closed term with a quoted instalment, or runs open
+/// ended until the client pays it off.
+///
+/// This is deliberately separate from InterestMethod. Both plans can charge the
+/// same interest the same way; what differs is the SHAPE of the obligation. An
+/// open-ended loan owes interest each period and capital whenever the client
+/// can, with no end date. A fixed-instalment loan is the whole deal agreed on
+/// day one: N periods, one quoted figure per period covering capital and
+/// interest together, and a schedule the client can be handed on paper.
+enum RepaymentPlan {
+  /// Interest per period, capital on the client's own rhythm. No fixed end.
+  OPEN_ENDED
+  /// A closed term of N equal instalments, each covering capital and interest.
+  /// The interest is worked out for the whole term up front, so paying capital
+  /// early does NOT reduce it -- it was fixed the day the loan was written.
+  FIXED_INSTALLMENTS
+}
+
 enum Periodicity {
   DAILY
   WEEKLY

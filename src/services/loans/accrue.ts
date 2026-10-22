@@ -25,7 +25,12 @@ export interface ComplianceSettings {
 async function loadAccrualLoan(
   tx: Tx,
   loanId: string,
-): Promise<{ loan: AccrualLoan; organizationId: string; lifecycle: string }> {
+): Promise<{
+  loan: AccrualLoan;
+  organizationId: string;
+  lifecycle: string;
+  repaymentPlan: string;
+}> {
   const row = await tx.loan.findUnique({
     where: { id: loanId },
     select: {
@@ -43,6 +48,7 @@ async function loadAccrualLoan(
       currentPrincipalBase: true,
       outstandingPrincipal: true,
       lifecycle: true,
+      repaymentPlan: true,
     },
   });
 
@@ -51,6 +57,7 @@ async function loadAccrualLoan(
   return {
     organizationId: row.organizationId,
     lifecycle: row.lifecycle,
+    repaymentPlan: row.repaymentPlan,
     loan: {
       anchorDueOn: fromPrismaDate(row.scheduleAnchorOn),
       anchorIndex: row.scheduleAnchorIndex,
@@ -95,7 +102,8 @@ export async function accrueLoan(
   loanId: string,
   today: CalendarDate,
 ): Promise<AccrualOutcome> {
-  const { loan, organizationId, lifecycle } = await loadAccrualLoan(tx, loanId);
+  const { loan, organizationId, lifecycle, repaymentPlan } =
+    await loadAccrualLoan(tx, loanId);
 
   // A closed loan stops accruing. Nothing here revives it.
   if (lifecycle !== "ACTIVE") {
@@ -104,6 +112,15 @@ export async function accrueLoan(
       lastPeriodIndex: loan.lastPeriodIndex,
       nextDueOn: today,
     };
+  }
+
+  // A fixed-instalment loan has no periods left to invent: the whole schedule
+  // was written when the loan was created, because its interest was fixed then
+  // and nothing since can change a figure. What accrual still owes it is the
+  // same thing it owes every other loan — turning a period that has reached its
+  // due date into a real obligation.
+  if (repaymentPlan === "FIXED_INSTALLMENTS") {
+    return matureScheduledPeriods(tx, loanId, loan.lastPeriodIndex, today);
   }
 
   const plan = planAccrual(loan, today);
@@ -145,6 +162,81 @@ export async function accrueLoan(
   };
 }
 
+/**
+ * Turns the instalments that have reached their due date into real debt.
+ *
+ * SCHEDULED means agreed; PENDING means owed today. Flipping on the due date and
+ * not before is what keeps the two honest, and it is what makes an early
+ * settlement cost the right amount: periods still SCHEDULED have not been
+ * charged, so the client is not asked to pay for months they never used.
+ *
+ * Idempotent. A second run on the same day finds nothing left SCHEDULED and due.
+ */
+async function matureScheduledPeriods(
+  tx: Tx,
+  loanId: string,
+  lastPeriodIndex: number,
+  today: CalendarDate,
+): Promise<AccrualOutcome> {
+  const due = await tx.loanPeriod.findMany({
+    where: {
+      loanId,
+      status: "SCHEDULED",
+      dueOn: { lte: toPrismaDate(today) },
+    },
+    orderBy: { periodIndex: "asc" },
+    select: { id: true, interestAccrued: true },
+  });
+
+  for (const period of due) {
+    // A zero-interest instalment is settled the moment it falls due; there is
+    // nothing to collect on the interest side of it.
+    const nothingOwed = fromDb(period.interestAccrued).isZero();
+    await tx.loanPeriod.update({
+      where: { id: period.id },
+      data: {
+        status: nothingOwed ? "PAID" : "PENDING",
+        accruedAt: new Date(),
+        settledAt: nothingOwed ? new Date() : null,
+      },
+    });
+  }
+
+  if (due.length > 0) {
+    await tx.loan.update({
+      where: { id: loanId },
+      data: { lastAccruedAt: new Date() },
+    });
+  }
+
+  return {
+    periodsCreated: due.length,
+    lastPeriodIndex,
+    nextDueOn: (await earliestOpenDueDate(tx, loanId)) ?? today,
+  };
+}
+
+/**
+ * Due date of the earliest instalment that is not finished with.
+ *
+ * On a fixed-instalment loan this replaces "the next period that has not
+ * accrued": there is no such period, the term is closed. What the operator and
+ * the aging report want to know is which instalment is next, and that is the
+ * oldest one still carrying something — whether it fell due last month or is
+ * still scheduled for March.
+ */
+async function earliestOpenDueDate(
+  tx: Tx,
+  loanId: string,
+): Promise<CalendarDate | null> {
+  const next = await tx.loanPeriod.findFirst({
+    where: { loanId, status: { in: ["SCHEDULED", "PENDING", "PARTIALLY_PAID"] } },
+    orderBy: { periodIndex: "asc" },
+    select: { dueOn: true },
+  });
+  return next ? fromPrismaDate(next.dueOn) : null;
+}
+
 export interface LoanStateSnapshot {
   outstandingPrincipal: Money;
   outstandingInterest: Money;
@@ -180,9 +272,12 @@ export async function refreshLoanState(
       periodicity: true,
       periodAnchor: true,
       customPeriodDays: true,
+      repaymentPlan: true,
     },
   });
   if (!loan) throw new ServiceError(`Loan ${loanId} does not exist.`);
+
+  const fixedInstallments = loan.repaymentPlan === "FIXED_INSTALLMENTS";
 
   const periods = await tx.loanPeriod.findMany({
     where: { loanId, status: { in: ["PENDING", "PARTIALLY_PAID"] } },
@@ -210,16 +305,29 @@ export async function refreshLoanState(
 
   const outstandingPrincipal = fromDb(loan.outstandingPrincipal);
 
+  // Interest on instalments that are agreed but have not come due yet. Only a
+  // fixed-instalment loan has any, and it is the difference between a loan that
+  // is finished and one whose capital merely happens to be at zero.
+  const scheduledInterestPending = fixedInstallments
+    ? await pendingScheduledInterest(tx, loanId)
+    : Money.zero();
+
   const lifecycle = deriveLifecycle(loan.lifecycle, {
     outstandingPrincipal,
     outstandingInterest,
+    scheduledInterestPending,
   });
 
-  // The next period that has not accrued is always lastPeriodIndex + 1.
+  // On an open-ended loan the next period is always lastPeriodIndex + 1, because
+  // periods are invented as they fall due. A fixed-instalment loan has no such
+  // period — asking for lastPeriodIndex + 1 there would quote a date past the
+  // end of the term — so it reports the earliest instalment still open.
   const nextDueOn =
-    lifecycle === "ACTIVE"
-      ? nextDueDate(loan, loan.lastPeriodIndex + 1)
-      : null;
+    lifecycle !== "ACTIVE"
+      ? null
+      : fixedInstallments
+        ? await earliestOpenDueDate(tx, loanId)
+        : nextDueDate(loan, loan.lastPeriodIndex + 1);
 
   const compliance =
     lifecycle === "ACTIVE"
@@ -256,6 +364,30 @@ export async function refreshLoanState(
     nextDueOn,
     oldestUnpaidDueOn,
   };
+}
+
+/** Interest on instalments that have been agreed but have not come due yet. */
+async function pendingScheduledInterest(
+  tx: Tx,
+  loanId: string,
+): Promise<Money> {
+  const periods = await tx.loanPeriod.findMany({
+    where: { loanId, status: "SCHEDULED" },
+    select: { interestAccrued: true, interestPaid: true, interestWaived: true },
+  });
+
+  return periods.reduce(
+    (sum: Money, p) =>
+      sum.plus(
+        Money.max(
+          Money.zero(),
+          fromDb(p.interestAccrued)
+            .minus(fromDb(p.interestPaid))
+            .minus(fromDb(p.interestWaived)),
+        ),
+      ),
+    Money.zero(),
+  );
 }
 
 function nextDueDate(

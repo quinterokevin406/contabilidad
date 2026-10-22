@@ -1,5 +1,11 @@
+import {
+  dueDateFor,
+  startDateFor,
+  type ScheduleAnchor,
+} from "@/core/loans/accrual";
 import { Money, type MoneyInput } from "@/core/money/money";
 import type { RoundingMode } from "@/core/money/rounding";
+import type { CalendarDate } from "@/core/time/calendar-date";
 
 /**
  * Level-payment loans with interest computed up front (points 4 and 9).
@@ -180,4 +186,35 @@ export function outstandingByContract(
   const paid = Money.of(paidSoFar);
   const remaining = plan.totalRepaid.minus(paid);
   return remaining.isPositive() ? remaining : Money.zero();
+}
+
+/** One instalment with the dates it actually falls between. */
+export interface ScheduledInstallment extends Installment {
+  /** 1-based period index, matching LoanPeriod.periodIndex. */
+  periodIndex: number;
+  startsOn: CalendarDate;
+  dueOn: CalendarDate;
+}
+
+/**
+ * Puts dates on a plan, so it can be written to the database and handed to a
+ * client on paper.
+ *
+ * The dates come from the same schedule engine every other loan uses, which is
+ * what keeps a fixed-instalment loan due on the 24th like all the others — the
+ * February clamp included.
+ */
+export function scheduleFixedInstallments(
+  plan: FixedInstallmentPlan,
+  anchor: ScheduleAnchor,
+): ScheduledInstallment[] {
+  return plan.schedule.map((installment) => {
+    const periodIndex = anchor.anchorIndex + installment.number;
+    return {
+      ...installment,
+      periodIndex,
+      startsOn: startDateFor(anchor, periodIndex),
+      dueOn: dueDateFor(anchor, periodIndex),
+    };
+  });
 }

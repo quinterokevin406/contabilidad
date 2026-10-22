@@ -227,6 +227,8 @@ export interface LoanPeriodRow {
   interestAccrued: Money;
   interestPaid: Money;
   interestOutstanding: Money;
+  /** Capital this instalment was scheduled to return. Zero if not applicable. */
+  principalDue: Money;
   status: string;
 }
 
@@ -280,6 +282,49 @@ export interface LoanDetail {
   settlementQuote: ReturnType<typeof quoteSettlement> | null;
   /** Interest the period in progress will owe at its due date. */
   upcomingInterest: Money | null;
+
+  /**
+   * The agreed plan, on a loan that has one.
+   *
+   * Null on an open-ended loan, which has no plan to show: it owes interest
+   * each period and runs until the client pays the capital off.
+   */
+  installmentPlan: {
+    termPeriods: number;
+    installment: Money;
+    /** What the instalments add up to: the figure the client agreed to repay. */
+    agreedTotal: Money;
+    /** Received so far against it, across every posted payment. */
+    collected: Money;
+    /** agreedTotal - collected. What is left of the plan, not what is due. */
+    remaining: Money;
+    /** Instalments already settled, out of termPeriods. */
+    installmentsPaid: number;
+    maturityOn: CalendarDate | null;
+  } | null;
+}
+
+/**
+ * How many whole instalments the money received covers.
+ *
+ * Deliberately not "how many periods are marked paid". A client who pays an
+ * instalment a week early settles no period: the interest has not come due, so
+ * every peso lands on capital. Counting statuses would print "0 of 6" beside a
+ * receipt for a full instalment, and the operator would reasonably conclude the
+ * payment had not registered.
+ */
+function installmentsCovered(
+  collected: Money,
+  installment: Money,
+  termPeriods: number,
+): number {
+  if (!installment.isPositive()) return 0;
+  const whole = collected
+    .toDecimal()
+    .dividedBy(installment.toDecimal())
+    .floor()
+    .toNumber();
+  return Math.max(0, Math.min(termPeriods, whole));
 }
 
 export async function getLoanDetail(
@@ -306,10 +351,15 @@ export async function getLoanDetail(
       roundingMode: true,
       moneyQuantum: true,
       openPeriodPolicy: true,
+      repaymentPlan: true,
+      termPeriods: true,
+      installmentAmount: true,
+      agreedTotal: true,
       scheduleAnchorOn: true,
       scheduleAnchorIndex: true,
       lastPeriodIndex: true,
       disbursedOn: true,
+      maturityOn: true,
       nextDueOn: true,
       daysOverdue: true,
       renewalCount: true,
@@ -331,6 +381,7 @@ export async function getLoanDetail(
           interestAccrued: true,
           interestPaid: true,
           interestWaived: true,
+          principalDue: true,
           status: true,
         },
       },
@@ -365,12 +416,25 @@ export async function getLoanDetail(
       interestAccrued: accrued,
       interestPaid: paid,
       interestOutstanding: accrued.minus(paid).minus(waived),
+      principalDue: fromDb(period.principalDue),
       status: period.status,
     };
   });
 
+  // Interest that is OWED, which means interest that has come due.
+  //
+  // A fixed-instalment loan carries its whole schedule from day one, so its
+  // later instalments are rows too — still SCHEDULED, agreed but not yet
+  // charged. Counting them here would report a loan disbursed this morning as
+  // already owing six months of interest, and the figure under "pendiente"
+  // would stop meaning what it means on every other screen: money the business
+  // can collect today. What the client still owes under the plan is a different
+  // question, answered separately below.
   const outstandingInterest = periods.reduce(
-    (acc, p) => (p.interestOutstanding.isPositive() ? acc.plus(p.interestOutstanding) : acc),
+    (acc, p) =>
+      p.status !== "SCHEDULED" && p.interestOutstanding.isPositive()
+        ? acc.plus(p.interestOutstanding)
+        : acc,
     Money.zero(),
   );
 
@@ -405,41 +469,66 @@ export async function getLoanDetail(
   let upcomingInterest: Money | null = null;
   let settlementQuote: LoanDetail["settlementQuote"] = null;
 
-  if (loan.lifecycle === "ACTIVE" && nextDueOn) {
-    const projection = projectPeriod(
-      {
-        anchorDueOn: fromPrismaDate(loan.scheduleAnchorOn),
-        anchorIndex: loan.scheduleAnchorIndex,
-        lastPeriodIndex: loan.lastPeriodIndex,
-        schedule: {
-          periodicity: loan.periodicity,
-          anchor: loan.periodAnchor,
-          customPeriodDays: loan.customPeriodDays,
-        },
-        interestMethod: loan.interestMethod,
-        ratePercent: rateFromDb(loan.ratePercent),
-        money: {
-          roundingMode: loan.roundingMode,
-          moneyQuantum: fromDb(loan.moneyQuantum),
-        },
-        principal: {
-          currentPrincipalBase: fromDb(loan.currentPrincipalBase),
-          outstandingPrincipal,
-        },
-      },
-      loan.lastPeriodIndex + 1,
-    );
+  // The period in progress.
+  //
+  // On an open-ended loan it is a projection: periods become rows only when
+  // they fall due. On a fixed-instalment loan it is the earliest instalment
+  // still SCHEDULED — a real row, written when the loan was created. Projecting
+  // one past the end of a closed term would quote a seventh instalment on a
+  // six-instalment loan, and this is the screen a lender reads the settlement
+  // figure off, so it has to be the figure the settlement will actually charge.
+  const fixedInstallments = loan.repaymentPlan === "FIXED_INSTALLMENTS";
 
-    upcomingInterest = projection.interest;
+  const running = fixedInstallments
+    ? [...periods]
+        .reverse()
+        .find((period) => period.status === "SCHEDULED")
+    : null;
+
+  if (loan.lifecycle === "ACTIVE" && (fixedInstallments ? running : nextDueOn)) {
+    const openPeriod = running
+      ? {
+          startsOn: running.startsOn,
+          dueOn: running.dueOn,
+          fullPeriodInterest: running.interestAccrued,
+        }
+      : (() => {
+          const projection = projectPeriod(
+            {
+              anchorDueOn: fromPrismaDate(loan.scheduleAnchorOn),
+              anchorIndex: loan.scheduleAnchorIndex,
+              lastPeriodIndex: loan.lastPeriodIndex,
+              schedule: {
+                periodicity: loan.periodicity,
+                anchor: loan.periodAnchor,
+                customPeriodDays: loan.customPeriodDays,
+              },
+              interestMethod: loan.interestMethod,
+              ratePercent: rateFromDb(loan.ratePercent),
+              money: {
+                roundingMode: loan.roundingMode,
+                moneyQuantum: fromDb(loan.moneyQuantum),
+              },
+              principal: {
+                currentPrincipalBase: fromDb(loan.currentPrincipalBase),
+                outstandingPrincipal,
+              },
+            },
+            loan.lastPeriodIndex + 1,
+          );
+          return {
+            startsOn: projection.startsOn,
+            dueOn: projection.dueOn,
+            fullPeriodInterest: projection.interest,
+          };
+        })();
+
+    upcomingInterest = Money.of(openPeriod.fullPeriodInterest);
 
     settlementQuote = quoteSettlement({
       principalOutstanding: outstandingPrincipal,
       accruedInterestOutstanding: outstandingInterest,
-      openPeriod: {
-        startsOn: projection.startsOn,
-        dueOn: projection.dueOn,
-        fullPeriodInterest: projection.interest,
-      },
+      openPeriod,
       // The policy frozen on the loan, not the current organization default.
       openPeriodPolicy: loan.openPeriodPolicy,
       asOf: today,
@@ -449,6 +538,39 @@ export async function getLoanDetail(
       },
     });
   }
+
+  // How far through the plan the client is. Measured from the money actually
+  // received, not from the instalment count, because a client who hands over
+  // half a payment has paid half an instalment and the figure should say so.
+  const collected = payments
+    .filter((payment) => payment.status !== "REVERSED")
+    .reduce((sum, payment) => sum.plus(payment.amount), Money.zero());
+
+  const installmentPlan =
+    fixedInstallments && loan.termPeriods && loan.installmentAmount
+      ? {
+          termPeriods: loan.termPeriods,
+          installment: fromDb(loan.installmentAmount),
+          agreedTotal: fromDb(loan.agreedTotal),
+          collected,
+          remaining: Money.max(
+            Money.zero(),
+            fromDb(loan.agreedTotal).minus(collected),
+          ),
+          // Counted from the MONEY, not from the period statuses. A client who
+          // pays an instalment a week early settles no period at all — the
+          // interest has not come due yet, so it all lands on capital — and
+          // counting statuses would report "0 of 6 instalments" next to a
+          // receipt for one. What the lender wants to know is how many
+          // instalments' worth has come in.
+          installmentsPaid: installmentsCovered(
+            collected,
+            fromDb(loan.installmentAmount),
+            loan.termPeriods,
+          ),
+          maturityOn: loan.maturityOn ? fromPrismaDate(loan.maturityOn) : null,
+        }
+      : null;
 
   return {
     id: loan.id,
@@ -489,6 +611,7 @@ export async function getLoanDetail(
     payments,
     settlementQuote,
     upcomingInterest,
+    installmentPlan,
   };
 }
 

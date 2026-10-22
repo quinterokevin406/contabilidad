@@ -12,6 +12,7 @@ import type {
   InterestMethod,
   Periodicity,
   Prisma,
+  RepaymentPlan,
 } from "@/generated/prisma";
 import { toDb } from "@/infra/db/money";
 import { closePeriod } from "@/services/analytics/close-period";
@@ -195,6 +196,12 @@ interface LoanSpec {
   customPeriodDays?: number;
   interestMethod: InterestMethod;
   allocationStrategy?: AllocationStrategy;
+  /** Omitted means OPEN_ENDED, the shape every demo loan had before. */
+  repaymentPlan?: RepaymentPlan;
+  /** FIXED_INSTALLMENTS only. */
+  termPeriods?: number;
+  /** FIXED_INSTALLMENTS only. Defaults to the loan's money quantum. */
+  installmentQuantum?: string;
   disbursedOn: CalendarDate;
   firstDueOn: CalendarDate;
   notes?: string;
@@ -202,12 +209,59 @@ interface LoanSpec {
 }
 
 /**
- * Fifteen loans covering every screen the product has: on-time, partially paid,
- * overdue across several aging buckets, renewed, renewed with more capital,
- * reduced by a capital payment, and fully settled. Amounts are deliberately round
- * so any figure on screen can be checked by hand.
+ * Loans covering every screen the product has: on-time, partially paid, overdue
+ * across several aging buckets, renewed, renewed with more capital, reduced by a
+ * capital payment, fully settled, and repaid in fixed instalments. Amounts are
+ * deliberately round so any figure on screen can be checked by hand.
+ *
+ * The fixed-instalment ones are not decoration. That product writes its whole
+ * schedule to the database on day one, as periods that are agreed but not yet
+ * due, and every aggregate in the system has to tell those apart from interest
+ * it can actually collect. Keeping one in the demo portfolio means the ledger
+ * reconciliation in `verify:ledger` runs against a book that contains one —
+ * which is how a query that quietly counts next March's interest as owed today
+ * gets caught by the suite instead of by the person using it.
  */
 const LOANS: readonly LoanSpec[] = [
+  // 0a. The lender's own case: a million at 16%, six months, interest and
+  //     capital together, six instalments of 326.700. Two paid on time, four
+  //     still scheduled — so the portfolio always holds agreed-but-not-yet-due
+  //     interest for the reconciliation checks to trip over.
+  {
+    clientKey: "juan",
+    principal: "1000000",
+    ratePercent: "16",
+    periodicity: "MONTHLY",
+    interestMethod: "SIMPLE_ON_ORIGINAL_PRINCIPAL",
+    repaymentPlan: "FIXED_INSTALLMENTS",
+    termPeriods: 6,
+    installmentQuantum: "100",
+    disbursedOn: d("2026-08-20"),
+    firstDueOn: d("2026-09-20"),
+    notes: "Cuota fija: 6 de 326.700, interés y capital juntos.",
+    events: [
+      { kind: "payment", on: d("2026-09-20"), amount: "326700" },
+      { kind: "payment", on: d("2026-10-20"), amount: "326700" },
+    ],
+  },
+
+  // 0b. The same product, behind: the first instalment fell due and was not
+  //     paid, so a fixed-instalment loan also appears in the overdue screens.
+  {
+    clientKey: "carlos",
+    principal: "600000",
+    ratePercent: "10",
+    periodicity: "MONTHLY",
+    interestMethod: "SIMPLE_ON_ORIGINAL_PRINCIPAL",
+    repaymentPlan: "FIXED_INSTALLMENTS",
+    termPeriods: 4,
+    installmentQuantum: "1000",
+    disbursedOn: d("2026-08-14"),
+    firstDueOn: d("2026-09-14"),
+    notes: "Cuota fija atrasada: no pagó la primera.",
+    events: [],
+  },
+
   // 1. Textbook case from the specification: pays its interest every month.
   {
     clientKey: "juan",
@@ -616,6 +670,9 @@ export async function seedDemo(
       customPeriodDays: spec.customPeriodDays ?? null,
       interestMethod: spec.interestMethod,
       allocationStrategy: spec.allocationStrategy ?? "INTEREST_FIRST",
+      repaymentPlan: spec.repaymentPlan ?? "OPEN_ENDED",
+      termPeriods: spec.termPeriods ?? null,
+      installmentQuantum: spec.installmentQuantum ?? null,
       periodAnchor: spec.periodicity === "MONTHLY" ? "CALENDAR" : "FIXED_DAYS",
       roundingMode: "HALF_UP",
       moneyQuantum: "1",

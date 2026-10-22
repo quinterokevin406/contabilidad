@@ -150,12 +150,22 @@ export default async function LoanDetailPage({
           value={formatMoney(loan.outstandingPrincipal)}
         />
         <Figure
-          label="Interés pendiente"
+          label={
+            loan.installmentPlan ? "Interés ya exigible" : "Interés pendiente"
+          }
           value={formatMoney(loan.outstandingInterest)}
         />
+        {/* On a closed term the sum of capital and overdue interest is not a
+            figure anybody collects: the client owes one instalment, on its due
+            date. Showing a million under any label a reader could take as "due
+            now" would be wrong in the only direction that matters. */}
         <Figure
-          label="Total pendiente"
-          value={formatMoney(loan.totalOutstanding)}
+          label={loan.installmentPlan ? "Cuota" : "Total pendiente"}
+          value={formatMoney(
+            loan.installmentPlan
+              ? loan.installmentPlan.installment
+              : loan.totalOutstanding,
+          )}
           emphasis
         />
       </div>
@@ -171,8 +181,12 @@ export default async function LoanDetailPage({
             )}
           />
           <Detail
-            label="Método"
-            value={METHOD_LABEL[loan.interestMethod] ?? loan.interestMethod}
+            label={loan.installmentPlan ? "Forma de pago" : "Método"}
+            value={
+              loan.installmentPlan
+                ? `Cuotas fijas · ${loan.installmentPlan.termPeriods} cuotas`
+                : (METHOD_LABEL[loan.interestMethod] ?? loan.interestMethod)
+            }
           />
           <Detail label="Desembolsado" value={formatDate(loan.disbursedOn)} />
           <Detail
@@ -186,6 +200,53 @@ export default async function LoanDetailPage({
           />
         </dl>
       </Card>
+
+      {loan.installmentPlan && (
+        <Card>
+          <CardHeader
+            title="El plan acordado"
+            description="Lo que se le dijo al cliente el día del desembolso"
+          />
+          <div className="px-5 py-4">
+            <p className="text-sm text-ink">
+              <strong className="cc-tabular">
+                {loan.installmentPlan.termPeriods} cuotas
+              </strong>{" "}
+              de{" "}
+              <strong className="cc-figure text-xl text-accent">
+                {formatMoney(loan.installmentPlan.installment)}
+              </strong>
+            </p>
+
+            <div className="mt-4 space-y-2.5">
+              <Row
+                label="Total acordado"
+                value={formatMoney(loan.installmentPlan.agreedTotal)}
+              />
+              <Row
+                label={`Recibido (${loan.installmentPlan.installmentsPaid} de ${loan.installmentPlan.termPeriods} cuotas)`}
+                value={formatMoney(loan.installmentPlan.collected)}
+              />
+              <div className="flex items-baseline justify-between border-t border-line pt-3">
+                <span className="text-sm font-medium text-ink">
+                  Falta por recibir del plan
+                </span>
+                <span className="cc-figure text-lg text-ink">
+                  {formatMoney(loan.installmentPlan.remaining)}
+                </span>
+              </div>
+            </div>
+
+            <p className="pt-3 text-xs text-ink-subtle">
+              El interés quedó fijo el día del desembolso: abonar capital antes
+              no lo baja.
+              {loan.installmentPlan.maturityOn
+                ? ` La última cuota vence el ${formatDate(loan.installmentPlan.maturityOn)}.`
+                : ""}
+            </p>
+          </div>
+        </Card>
+      )}
 
       {loan.settlementQuote && (
         <Card>
@@ -218,6 +279,10 @@ export default async function LoanDetailPage({
             </div>
             <p className="pt-1 text-xs text-ink-subtle">
               {loan.settlementQuote.openPeriodExplanation}
+              {loan.installmentPlan
+                ? " Las cuotas que el cliente no alcance quedan condonadas: no" +
+                  " se le cobran, y queda registrado cuánto se perdonó."
+                : ""}
             </p>
           </div>
         </Card>
@@ -225,8 +290,12 @@ export default async function LoanDetailPage({
 
       <Card>
         <CardHeader
-          title="Períodos"
-          description="Cada período conserva la base y la tasa con que se calculó"
+          title={loan.installmentPlan ? "Las cuotas" : "Períodos"}
+          description={
+            loan.installmentPlan
+              ? "El plan completo desde el primer día. Cada cuota conserva el interés y el capital con que se acordó"
+              : "Cada período conserva la base y la tasa con que se calculó"
+          }
         />
         {loan.periods.length === 0 ? (
           <EmptyState
@@ -244,7 +313,14 @@ export default async function LoanDetailPage({
                 <tr className="border-b border-line text-left">
                   <Th>#</Th>
                   <Th>Vencimiento</Th>
-                  <Th className="text-right">Base</Th>
+                  {loan.installmentPlan ? (
+                    <>
+                      <Th className="text-right">Cuota</Th>
+                      <Th className="text-right">Capital</Th>
+                    </>
+                  ) : (
+                    <Th className="text-right">Base</Th>
+                  )}
                   <Th className="text-right">Interés</Th>
                   <Th className="text-right">Pagado</Th>
                   <Th className="text-right">Pendiente</Th>
@@ -252,7 +328,10 @@ export default async function LoanDetailPage({
                 </tr>
               </thead>
               <tbody>
-                {loan.periods.map((period) => {
+                {(loan.installmentPlan
+                  ? [...loan.periods].reverse()
+                  : loan.periods
+                ).map((period) => {
                   const status =
                     PERIOD_STATUS[period.status] ?? PERIOD_STATUS.PENDING!;
                   return (
@@ -266,9 +345,22 @@ export default async function LoanDetailPage({
                       <td className="px-4 py-2.5 text-ink-muted">
                         {formatDate(period.dueOn)}
                       </td>
-                      <td className="cc-tabular px-4 py-2.5 text-right text-ink-subtle">
-                        {formatMoney(period.principalBasis)}
-                      </td>
+                      {loan.installmentPlan ? (
+                        <>
+                          <td className="cc-tabular px-4 py-2.5 text-right text-ink">
+                            {formatMoney(
+                              period.principalDue.plus(period.interestAccrued),
+                            )}
+                          </td>
+                          <td className="cc-tabular px-4 py-2.5 text-right text-ink-subtle">
+                            {formatMoney(period.principalDue)}
+                          </td>
+                        </>
+                      ) : (
+                        <td className="cc-tabular px-4 py-2.5 text-right text-ink-subtle">
+                          {formatMoney(period.principalBasis)}
+                        </td>
+                      )}
                       <td className="cc-tabular px-4 py-2.5 text-right text-ink-muted">
                         {formatMoney(period.interestAccrued)}
                       </td>

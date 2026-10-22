@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { allocatePayment } from "@/core/payments/allocation";
+import { formatMoney } from "@/core/money/format";
 import { Money } from "@/core/money/money";
 import {
   calendarDate,
@@ -405,10 +406,24 @@ const newLoanSchema = z.object({
     .refine((v) => Number(v) > 0, "La tasa tiene que ser mayor a cero."),
   periodicity: z.enum(["DAILY", "WEEKLY", "BIWEEKLY", "MONTHLY", "CUSTOM"]),
   customPeriodDays: z.coerce.number().int().min(1).max(365).optional(),
-  interestMethod: z.enum([
-    "SIMPLE_ON_ORIGINAL_PRINCIPAL",
-    "SIMPLE_ON_OUTSTANDING_PRINCIPAL",
-  ]),
+  /**
+   * Optional on purpose. A fixed-instalment loan does not offer the choice —
+   * its arithmetic IS interest on the original principal — so the form does not
+   * render the field, and a schema that demanded it would reject every
+   * fixed-instalment loan before the service ever saw it.
+   */
+  interestMethod: z
+    .enum(["SIMPLE_ON_ORIGINAL_PRINCIPAL", "SIMPLE_ON_OUTSTANDING_PRINCIPAL"])
+    .optional(),
+  repaymentPlan: z.enum(["OPEN_ENDED", "FIXED_INSTALLMENTS"]),
+  /** Only read for a FIXED_INSTALLMENTS loan. */
+  termPeriods: z.coerce.number().int().min(1).max(120).optional(),
+  /**
+   * What the instalment is rounded to, so the client is quoted a figure they
+   * can say out loud. Defaults to the thousand, which is how these loans are
+   * actually quoted in Colombia.
+   */
+  installmentQuantum: z.enum(["1", "100", "1000"]).optional(),
   disbursedOn: z.string().min(10),
   firstDueOn: z.string().min(10),
   notes: z.string().optional(),
@@ -453,6 +468,26 @@ export async function registerLoan(
       };
     }
 
+    const fixed = data.repaymentPlan === "FIXED_INSTALLMENTS";
+
+    if (fixed && !data.termPeriods) {
+      return {
+        ok: false,
+        error: "Decime en cuántas cuotas se paga.",
+        message: null,
+        loanId: null,
+      };
+    }
+
+    if (!fixed && !data.interestMethod) {
+      return {
+        ok: false,
+        error: "Elegí cómo se calcula el interés.",
+        message: null,
+        loanId: null,
+      };
+    }
+
     const result = await tenantTransaction((tx) =>
       createLoan(tx, {
         organizationId: user.organizationId,
@@ -462,14 +497,29 @@ export async function registerLoan(
         periodicity: data.periodicity,
         customPeriodDays:
           data.periodicity === "CUSTOM" ? (data.customPeriodDays ?? 30) : null,
-        interestMethod: data.interestMethod,
+        // A fixed-instalment loan computes its interest on the original
+        // principal for every period of the term — that is what makes the six
+        // instalments identical. The form does not offer the choice, so it is
+        // not a choice that can be got wrong here either.
+        interestMethod: fixed
+          ? "SIMPLE_ON_ORIGINAL_PRINCIPAL"
+          : data.interestMethod!,
+        repaymentPlan: data.repaymentPlan,
+        termPeriods: fixed ? data.termPeriods : null,
+        installmentQuantum: fixed ? (data.installmentQuantum ?? "1000") : null,
         // Frozen from the organization's defaults at this moment. A later
         // change in Settings must never move a balance that already exists.
         allocationStrategy: settings.defaultAllocationStrategy,
         periodAnchor: settings.defaultPeriodAnchor,
         roundingMode: settings.defaultRoundingMode,
         moneyQuantum: settings.moneyQuantum.toString(),
-        openPeriodPolicy: settings.defaultOpenPeriodPolicy,
+        // What an early cancellation costs. On a fixed-instalment loan the
+        // answer the lender gave is the capital still owed plus the instalment
+        // in progress, and nothing for the months after it — which is exactly
+        // FULL_PERIOD. An open-ended loan keeps the organization's default.
+        openPeriodPolicy: fixed
+          ? "FULL_PERIOD"
+          : settings.defaultOpenPeriodPolicy,
         renewalDueBasis: settings.defaultRenewalDueBasis,
         disbursedOn,
         firstDueOn,
@@ -488,7 +538,10 @@ export async function registerLoan(
       error: null,
       message: result.deduplicated
         ? `Ese préstamo ya estaba registrado como ${result.code}.`
-        : `Préstamo ${result.code} desembolsado. La plata salió de la caja.`,
+        : result.plan
+          ? `Préstamo ${result.code} desembolsado: ${data.termPeriods} cuotas ` +
+            `de ${formatMoney(result.plan.installment)}. La plata salió de la caja.`
+          : `Préstamo ${result.code} desembolsado. La plata salió de la caja.`,
       loanId: result.loanId,
     };
   } catch (error: unknown) {

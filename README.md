@@ -273,7 +273,7 @@ docs/           Backup, restore and migration.
 ```
 
 The dependency direction never inverts: `core` knows nothing about Prisma or
-Next.js, which is why its 272 tests run in under four seconds and why the
+Next.js, which is why its 299 tests run in under four seconds and why the
 financial rules can be read without a database in front of you.
 
 ---
@@ -302,11 +302,46 @@ class, and the profit report reads only the classes that are actually income.
 This is enforced structurally: `FinancialClass` is an enum, and a movement of
 class `PRINCIPAL` cannot be counted as income anywhere in the system.
 
-### Interest accrues when a period falls due, never before
+### Interest becomes a debt when a period falls due, never before
 
-A period materializes exactly when today reaches its due date. Projections of
-future interest are computed on demand and **never written**, so the books never
-contain a charge that has not yet occurred.
+Interest is an obligation on its due date and not a day sooner. On an open-ended
+loan a period does not even exist until then: it materializes when today reaches
+its due date, and projections of future interest are computed on demand and
+never written. The reason is that a period row freezes the principal it was
+computed on, and under `SIMPLE_ON_OUTSTANDING_PRINCIPAL` the right basis depends
+on how much capital had been returned by the time the period started — freezing
+it early would charge interest on money the client had already paid back.
+
+A fixed-instalment loan is the one case where the whole schedule *is* written on
+day one, because that objection cannot apply to it: its interest is computed on
+the original principal for every period and was settled the day the loan was
+written, so no later payment can move a single figure. Those rows are stored as
+`SCHEDULED` — agreed, not yet owed — and only accrual turns one into a debt on
+its date. The distinction is not cosmetic: **every balance, aging bucket and
+portfolio total in this system counts only what has come due**, which is what
+makes a client who cancels in month two pay for two months and not for six.
+
+### A loan is one of two shapes
+
+**Interest per period, open-ended.** The client owes interest each period and
+returns capital whenever they can. There is no end date. This is the arrangement
+the system was built around.
+
+**Fixed instalments.** A closed term agreed in full on day one: *a million at
+16%, six months, six instalments of 326.700*. The interest is worked out for the
+whole term and added to the principal, and each instalment covers capital and
+interest together. This is **not** a bank's amortised loan — the rate applies to
+the original principal every period, so paying capital early does not reduce the
+interest. The instalment is rounded **up**, never down, so every one of them is
+the same round figure a client can repeat from memory, and the agreed total is
+what those instalments add up to rather than the other way round. Capital is
+split first so that exactly the principal returns; the few pesos rounding adds
+land in the interest column and are shown on the quote as such.
+
+Cancelling a fixed-instalment loan early costs **the capital still owed plus the
+instalment in progress**. The instalments the client never reached are not
+charged — they are closed as waived, with the forgiven amount recorded, because
+a sum that was given up should be visible rather than simply gone.
 
 ### Changing the configuration never rewrites the past
 
@@ -477,14 +512,21 @@ on the 24th is due on the 24th in Bogotá regardless of where the server sits.
 
 ```bash
 npm run db:test   # builds a throwaway database seeded with demo data
-npm test          # 272 unit tests of the financial engine
+npm test          # 299 unit tests of the financial engine
 npm run typecheck
-npm run verify    # everything above, plus fifteen integration checks
+npm run verify    # everything above, plus sixteen integration checks
+npm run dev:test  # the app itself, against that throwaway database
 ```
 
 `db:test` is a prerequisite and only has to be run once. The integration checks
 need data to work on, and they get their own database for it — rolling back a
 transaction is not a reason to point them at a live business.
+
+`dev:test` is for clicking through a change by hand. Plain `npm run dev`
+reads `.env`, which after a deployment points at the live business, and a
+test client entered there is a test client that stays there: nothing
+financial in this system can be deleted. Both commands refuse any database
+that is not on this machine.
 
 The integration scripts post real payments, renewals, settlements and reversals
 against the real database and then **roll every transaction back**. They exist to

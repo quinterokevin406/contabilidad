@@ -32,6 +32,17 @@ export interface LoanDebtState {
   outstandingPrincipal: MoneyInput;
   /** Sum of interest still owed across all accrued periods. */
   outstandingInterest: MoneyInput;
+  /**
+   * Interest on instalments that have been agreed but have not come due yet.
+   *
+   * Only a fixed-instalment loan has any: its whole schedule exists from day
+   * one, so a client who pays all the capital off in month two still owes the
+   * interest on the four instalments still to run. Without this the loan would
+   * read as PAID while four payments were still coming.
+   *
+   * Zero, and omitted, on an open-ended loan, which has no agreed future.
+   */
+  scheduledInterestPending?: MoneyInput;
 }
 
 export interface ComplianceInput {
@@ -97,9 +108,17 @@ export function computeDaysOverdue(
 /**
  * Decides whether a loan is still live.
  *
- * A loan is PAID only when both principal and accrued interest reach exactly
- * zero. "Close enough" does not exist here: the balance is decimal-exact, so a
- * residual peso means the loan is still open and the operator needs to see it.
+ * A loan is PAID only when principal, accrued interest AND any interest still
+ * scheduled all reach exactly zero. "Close enough" does not exist here: the
+ * balance is decimal-exact, so a residual peso means the loan is still open and
+ * the operator needs to see it.
+ *
+ * The scheduled part matters on a fixed-instalment loan. Capital can be paid
+ * off early there — nothing stops a client handing over the whole million in
+ * month two — but the interest was fixed when the loan was written and the
+ * remaining instalments are still owed. Closing the loan on a zero capital
+ * balance would forgive them silently. A client who wants them forgiven settles
+ * the loan, which is a decision somebody makes on the record.
  */
 export function deriveLifecycle(
   current: LoanLifecycle,
@@ -110,14 +129,17 @@ export function deriveLifecycle(
 
   const principal = Money.of(debt.outstandingPrincipal);
   const interest = Money.of(debt.outstandingInterest);
+  const scheduled = Money.of(debt.scheduledInterestPending ?? "0");
 
-  if (principal.isNegative() || interest.isNegative()) {
+  if (principal.isNegative() || interest.isNegative() || scheduled.isNegative()) {
     throw new Error(
       "A loan reports a negative balance, which means its state is corrupt.",
     );
   }
 
-  return principal.isZero() && interest.isZero() ? "PAID" : "ACTIVE";
+  return principal.isZero() && interest.isZero() && scheduled.isZero()
+    ? "PAID"
+    : "ACTIVE";
 }
 
 export interface LoanStateDescription {

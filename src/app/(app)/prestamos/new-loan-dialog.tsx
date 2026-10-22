@@ -7,6 +7,12 @@ import { useActionState, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Modal, ModalField, modalInputClass } from "@/components/ui/modal";
 import {
+  FixedInstallmentError,
+  planFixedInstallments,
+  type FixedInstallmentPlan,
+} from "@/core/loans/fixed-installment";
+import { formatMoney } from "@/core/money/format";
+import {
   registerLoan,
   type CreateLoanActionResult,
 } from "@/server/loans/actions";
@@ -110,6 +116,11 @@ function NewLoanDialog({
   const [disbursedOn, setDisbursedOn] = useState(today);
   const [principal, setPrincipal] = useState("");
   const [ratePercent, setRatePercent] = useState("");
+  const [repaymentPlan, setRepaymentPlan] = useState("OPEN_ENDED");
+  const [termPeriods, setTermPeriods] = useState(6);
+  const [installmentQuantum, setInstallmentQuantum] = useState("1000");
+
+  const fixed = repaymentPlan === "FIXED_INSTALLMENTS";
   const [firstDueOn, setFirstDueOn] = useState(
     addDays(today, PERIOD_DAYS[defaultPeriodicity] ?? 30),
   );
@@ -140,6 +151,44 @@ function NewLoanDialog({
     }
     return Math.round((p * r) / 100);
   }, [principal, ratePercent]);
+
+  // The quote for a fixed-instalment loan comes out of the SAME engine the loan
+  // will run on, not out of an approximation. The operator is about to say a
+  // figure out loud to a client, so it had better be the figure the system then
+  // charges — down to the last peso.
+  const quote = useMemo<
+    { plan: FixedInstallmentPlan; error: null } | { plan: null; error: string } | null
+  >(() => {
+    if (!fixed) return null;
+
+    const amount = principal.replace(/\./g, "").replace(",", ".");
+    const rate = ratePercent.replace(",", ".");
+    if (!/^\d+(\.\d+)?$/.test(amount) || !/^\d+(\.\d+)?$/.test(rate)) {
+      return null;
+    }
+    if (Number(amount) <= 0 || Number(rate) <= 0) return null;
+
+    try {
+      return {
+        plan: planFixedInstallments({
+          principal: amount,
+          ratePercent: rate,
+          periods: termPeriods,
+          installmentQuantum,
+          roundingMode: "HALF_UP",
+        }),
+        error: null,
+      };
+    } catch (error) {
+      return {
+        plan: null,
+        error:
+          error instanceof FixedInstallmentError
+            ? error.message
+            : "No se pudo calcular la cuota con esos datos.",
+      };
+    }
+  }, [fixed, principal, ratePercent, termPeriods, installmentQuantum]);
 
   if (clients.length === 0) {
     return (
@@ -189,6 +238,29 @@ function NewLoanDialog({
             </select>
           </ModalField>
         )}
+
+        <input type="hidden" name="repaymentPlan" value={repaymentPlan} />
+
+        <ModalField
+          label="Forma de pago"
+          htmlFor="repaymentPlan"
+          hint="Esto no se puede cambiar después. Define todo el préstamo."
+        >
+          <div className="grid gap-2 sm:grid-cols-2">
+            <PlanOption
+              selected={!fixed}
+              onSelect={() => setRepaymentPlan("OPEN_ENDED")}
+              title="Interés por período"
+              detail="Paga el interés cada período y el capital cuando pueda. Sin fecha de fin."
+            />
+            <PlanOption
+              selected={fixed}
+              onSelect={() => setRepaymentPlan("FIXED_INSTALLMENTS")}
+              title="Cuotas fijas"
+              detail="Interés y capital juntos en cuotas iguales, con fecha de fin."
+            />
+          </div>
+        </ModalField>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <ModalField
@@ -289,27 +361,120 @@ function NewLoanDialog({
           </ModalField>
         </div>
 
-        <ModalField
-          label="Cómo se calcula el interés"
-          htmlFor="interestMethod"
-          hint="Sobre capital original: la cuota no baja al abonar. Sobre saldo: baja."
-        >
-          <select
-            id="interestMethod"
-            name="interestMethod"
-            defaultValue={defaultInterestMethod}
-            className={modalInputClass}
-          >
-            <option value="SIMPLE_ON_ORIGINAL_PRINCIPAL">
-              Sobre el capital original
-            </option>
-            <option value="SIMPLE_ON_OUTSTANDING_PRINCIPAL">
-              Sobre el saldo de capital
-            </option>
-          </select>
-        </ModalField>
+        {fixed ? (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <ModalField
+              label="En cuántas cuotas"
+              htmlFor="termPeriods"
+              hint={`Cuotas ${PERIOD_LABEL[periodicity] ?? ""}es.`}
+            >
+              <input
+                id="termPeriods"
+                name="termPeriods"
+                type="number"
+                min={1}
+                max={120}
+                value={termPeriods}
+                onChange={(e) => setTermPeriods(Number(e.target.value))}
+                className={modalInputClass}
+                required
+              />
+            </ModalField>
 
-        {interest !== null && (
+            <ModalField
+              label="Redondear la cuota"
+              htmlFor="installmentQuantum"
+              hint="Para dar una cifra que el cliente pueda repetir de memoria."
+            >
+              <select
+                id="installmentQuantum"
+                name="installmentQuantum"
+                value={installmentQuantum}
+                onChange={(e) => setInstallmentQuantum(e.target.value)}
+                className={modalInputClass}
+              >
+                <option value="1000">Al mil</option>
+                <option value="100">A la centena</option>
+                <option value="1">Al peso</option>
+              </select>
+            </ModalField>
+          </div>
+        ) : (
+          <ModalField
+            label="Cómo se calcula el interés"
+            htmlFor="interestMethod"
+            hint="Sobre capital original: la cuota no baja al abonar. Sobre saldo: baja."
+          >
+            <select
+              id="interestMethod"
+              name="interestMethod"
+              defaultValue={defaultInterestMethod}
+              className={modalInputClass}
+            >
+              <option value="SIMPLE_ON_ORIGINAL_PRINCIPAL">
+                Sobre el capital original
+              </option>
+              <option value="SIMPLE_ON_OUTSTANDING_PRINCIPAL">
+                Sobre el saldo de capital
+              </option>
+            </select>
+          </ModalField>
+        )}
+
+        {/* A fixed-instalment loan is quoted, not estimated: this is the real
+            engine, so the figure shown here is the figure that gets charged. */}
+        {fixed && quote?.plan && (
+          <div className="rounded-[var(--radius-control)] border border-accent/30 bg-accent-soft/15 px-3 py-3">
+            <p className="text-sm text-ink">
+              <strong className="cc-tabular">{termPeriods} cuotas</strong> de{" "}
+              <strong className="cc-tabular text-base">
+                {formatMoney(quote.plan.installment)}
+              </strong>
+            </p>
+            <dl className="mt-2.5 grid gap-x-4 gap-y-1 text-xs text-ink-muted sm:grid-cols-2">
+              <div className="flex justify-between gap-2">
+                <dt>Le entregás</dt>
+                <dd className="cc-tabular text-ink">
+                  {formatMoney(quote.plan.principal)}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt>Te devuelve en total</dt>
+                <dd className="cc-tabular text-ink">
+                  {formatMoney(quote.plan.totalRepaid)}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt>Tu ganancia</dt>
+                <dd className="cc-tabular text-positive">
+                  {formatMoney(quote.plan.totalInterest)}
+                </dd>
+              </div>
+              {quote.plan.roundingGain.isPositive() && (
+                <div className="flex justify-between gap-2">
+                  <dt>De eso, por el redondeo</dt>
+                  <dd className="cc-tabular text-ink">
+                    {formatMoney(quote.plan.roundingGain)}
+                  </dd>
+                </div>
+              )}
+            </dl>
+            <p className="mt-2.5 border-t border-accent/20 pt-2 text-xs text-ink-muted">
+              El interés queda fijo hoy: abonar capital antes no lo baja. Si el
+              cliente quiere cancelar antes de tiempo, paga el capital que le
+              falta más la cuota en curso, y las que no alcanzó no se le cobran.
+            </p>
+          </div>
+        )}
+
+        {fixed && quote?.error && (
+          <p className="flex items-start gap-2 text-sm text-danger">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            {quote.error}
+          </p>
+        )}
+
+        {!fixed && interest !== null && (
           <div className="rounded-[var(--radius-control)] border border-line bg-canvas px-3 py-2.5 text-xs text-ink-muted">
             Interés del primer período:{" "}
             <strong className="cc-tabular text-ink">
@@ -354,5 +519,48 @@ function NewLoanDialog({
         </div>
       </form>
     </Modal>
+  );
+}
+
+/**
+ * One of the two shapes a loan can take.
+ *
+ * A radio button with a sentence attached, because the choice decides what the
+ * client will be paying for months and nobody should have to guess which one
+ * "cuotas fijas" means.
+ */
+function PlanOption({
+  selected,
+  onSelect,
+  title,
+  detail,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  title: string;
+  detail: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={`rounded-[var(--radius-control)] border px-3 py-2.5 text-left transition ${
+        selected
+          ? "border-accent bg-accent-soft/20"
+          : "border-line bg-canvas hover:border-line-strong"
+      }`}
+    >
+      <span className="flex items-center gap-2 text-sm font-medium text-ink">
+        <span
+          aria-hidden
+          className={`size-3.5 shrink-0 rounded-full border-2 ${
+            selected ? "border-accent bg-accent" : "border-line-strong"
+          }`}
+        />
+        {title}
+      </span>
+      <span className="mt-1 block text-xs text-ink-muted">{detail}</span>
+    </button>
   );
 }
