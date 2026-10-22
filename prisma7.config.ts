@@ -31,6 +31,18 @@ if (!url) {
   );
 }
 
+/**
+ * Where Prisma builds its scratch copy of the schema.
+ *
+ * `migrate dev` and `migrate diff --from-migrations` replay every migration
+ * into a throwaway database to work out what changed. That database is created
+ * and dropped, so it must NEVER be the real one — and on a managed host the
+ * CLI usually cannot create databases at all. Point it at a PostgreSQL on this
+ * machine; leave it unset in production, where migrations are only ever
+ * applied with `migrate deploy`, which needs no shadow database.
+ */
+const shadowDatabaseUrl = process.env.SHADOW_DATABASE_URL;
+
 export default defineConfig({
   // Multi-file schema: one file per domain under prisma/schema/.
   schema: "prisma/schema",
@@ -40,5 +52,6 @@ export default defineConfig({
   },
   datasource: {
     url,
+    ...(shadowDatabaseUrl ? { shadowDatabaseUrl } : {}),
   },
 });
