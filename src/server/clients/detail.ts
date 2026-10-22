@@ -145,6 +145,7 @@ export async function getClientDetail(
           interestPaid: true,
           interestWaived: true,
           accruedAt: true,
+          status: true,
         },
         orderBy: { periodIndex: "asc" },
       },
@@ -213,8 +214,16 @@ export async function getClientDetail(
       .plus(original)
       .plus(additional);
 
+    // Interest that is OWED, which means interest that has come due.
+    //
+    // A fixed-instalment loan carries its whole schedule as rows from day one,
+    // still SCHEDULED until each instalment reaches its date. Counting those
+    // here would report a client as owing six months of interest the afternoon
+    // they took the loan out, and this figure feeds the portfolio totals — so
+    // the business would read its own book wrong, not just one screen.
     let loanInterestOutstanding = Money.zero();
     for (const period of loan.periods) {
+      if (period.status === "SCHEDULED") continue;
       const owed = fromDb(period.interestAccrued)
         .minus(fromDb(period.interestPaid))
         .minus(fromDb(period.interestWaived));
