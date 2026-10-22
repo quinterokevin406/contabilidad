@@ -1,6 +1,13 @@
 "use client";
 
-import { AlertCircle, CheckCircle2, Loader2, Receipt, X } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Info,
+  Loader2,
+  Receipt,
+  X,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useMemo, useState } from "react";
 
@@ -431,6 +438,33 @@ function Confirmation({
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* Paying a fixed instalment before its due date. The split is correct
+          and the agreed total does not move, but "$0 a intereses" against a
+          full instalment looks like a mistake unless somebody says why. */}
+      {breakdown.earlyInstallment && (
+        <div className="flex items-start gap-2.5 rounded-[var(--radius-control)] border border-line bg-canvas px-3.5 py-3">
+          <Info className="mt-px size-4 shrink-0 text-ink-subtle" />
+          <div className="space-y-1.5 text-xs text-ink-muted">
+            <p>
+              La cuota {breakdown.earlyInstallment.periodIndex} vence el{" "}
+              <strong className="text-ink">
+                {formatDate(calendarDate(breakdown.earlyInstallment.dueOn))}
+              </strong>
+              . Como todavía no vence, su interés no se ha causado y esta plata
+              baja el capital.
+            </p>
+            <p>
+              Ese día se causarán los{" "}
+              <strong className="cc-tabular text-ink">
+                {formatMoney(breakdown.earlyInstallment.interest)}
+              </strong>{" "}
+              de interés de la cuota y quedarán pendientes. No estás pagando de
+              más: el total acordado no cambia, solo el orden en que se aplica.
+            </p>
+          </div>
         </div>
       )}
 

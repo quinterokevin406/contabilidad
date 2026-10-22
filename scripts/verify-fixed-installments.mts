@@ -369,6 +369,71 @@ async function main() {
     paid.after.lifecycle,
   );
 
+  // --- 3b. Paying before the due date settles no interest ----------------
+  //
+  // The confirmation screen tells the operator this in words, and the words are
+  // only true while this is. If allocation ever starts reaching into interest
+  // that has not come due, the notice turns into a lie on a screen somebody
+  // reads before handing money over.
+
+  console.log("\n3b. Pagar antes del vencimiento no toca intereses");
+
+  const beforeDue = await inRolledBackTx(async (tx) => {
+    const { loan, today } = await makeLoan(tx, org.id, actor);
+
+    const first = await tx.loanPeriod.findFirstOrThrow({
+      where: { loanId: loan.loanId, periodIndex: 1 },
+      select: { dueOn: true, interestAccrued: true, status: true },
+    });
+
+    // The day after disbursement: the first instalment is a fortnight away.
+    const payment = await postPayment(tx, {
+      organizationId: org.id,
+      loanId: loan.loanId,
+      amount: plan.installment,
+      paidOn: addDays(today, 1),
+      actor,
+      settings: SETTINGS,
+      idempotencyKey: `verify_fix_early_${crypto.randomUUID()}`,
+    });
+
+    return {
+      plan: payment.plan,
+      firstStatus: first.status,
+      firstInterest: fromDb(first.interestAccrued),
+      after: await tx.loan.findUniqueOrThrow({
+        where: { id: loan.loanId },
+        select: { outstandingPrincipal: true, lifecycle: true },
+      }),
+    };
+  });
+
+  check(
+    "la cuota todavía estaba agendada, no exigible",
+    beforeDue.firstStatus === "SCHEDULED",
+    beforeDue.firstStatus,
+  );
+  check(
+    "no se cobró ni un peso de interés",
+    beforeDue.plan.interestTotal.isZero(),
+    beforeDue.plan.interestTotal.toString(),
+  );
+  check(
+    "toda la plata bajó el capital",
+    beforeDue.plan.principalTotal.equals(plan.installment),
+    beforeDue.plan.principalTotal.toString(),
+  );
+  check(
+    "y el interés de esa cuota sigue esperando su fecha",
+    beforeDue.firstInterest.isPositive(),
+    `${beforeDue.firstInterest.toString()} se causarán al vencer`,
+  );
+  check(
+    "el préstamo no se cerró por adelantar",
+    beforeDue.after.lifecycle === "ACTIVE",
+    beforeDue.after.lifecycle,
+  );
+
   // --- 4. Paying the capital early does not close the loan ---------------
 
   console.log("\n4. Adelantar capital no cierra el préstamo solo");

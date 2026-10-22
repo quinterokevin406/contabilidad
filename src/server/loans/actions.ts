@@ -58,6 +58,23 @@ export interface PeriodOutcomeView {
   fullySettled: boolean;
 }
 
+/**
+ * The instalment this money would have covered, had it arrived on its date.
+ *
+ * Set only on a fixed-instalment loan being paid BEFORE the next instalment
+ * falls due. Interest becomes a debt on the due date and not a day earlier, so
+ * a client who pays a week ahead settles no interest at all and every peso
+ * lands on capital. The arithmetic is right and the total never changes — but
+ * an operator reading "$0 a intereses" against a full instalment deserves to be
+ * told why, rather than left to wonder whether the payment registered wrong.
+ */
+export interface EarlyInstallmentNotice {
+  periodIndex: number;
+  dueOn: CalendarDate;
+  /** What that instalment will owe in interest once it falls due. */
+  interest: string;
+}
+
 export interface PaymentBreakdown {
   amount: string;
   interest: string;
@@ -66,6 +83,7 @@ export interface PaymentBreakdown {
   unapplied: string;
   resultingPrincipal: string;
   periodOutcomes: PeriodOutcomeView[];
+  earlyInstallment: EarlyInstallmentNotice | null;
 }
 
 export interface PreviewResult {
@@ -136,6 +154,7 @@ export async function previewPayment(
           select: {
             allocationStrategy: true,
             outstandingPrincipal: true,
+            repaymentPlan: true,
             periods: {
               where: { status: { in: ["PENDING", "PARTIALLY_PAID"] } },
               orderBy: { periodIndex: "asc" },
@@ -186,7 +205,39 @@ export async function previewPayment(
 
         const byId = new Map(openPeriods.map((p) => [p.periodId, p]));
 
+        // Accrual already ran for `paidOn` above, so anything still SCHEDULED
+        // has genuinely not fallen due yet.
+        //
+        // The notice answers one question and only one: "why does it say zero
+        // to interest?". So it requires that NO interest was settled at all. A
+        // client paying down an overdue loan also puts money on capital with
+        // instalments still scheduled ahead, and telling them their payment
+        // went to capital because nothing was due would be false — part of it
+        // went to interest, which is why the figure beside it is not zero.
+        let earlyInstallment: EarlyInstallmentNotice | null = null;
+
+        if (
+          loan.repaymentPlan === "FIXED_INSTALLMENTS" &&
+          plan.interestTotal.isZero() &&
+          plan.principalTotal.isPositive()
+        ) {
+          const next = await tx.loanPeriod.findFirst({
+            where: { loanId: parsed.data.loanId, status: "SCHEDULED" },
+            orderBy: { periodIndex: "asc" },
+            select: { periodIndex: true, dueOn: true, interestAccrued: true },
+          });
+
+          if (next) {
+            earlyInstallment = {
+              periodIndex: next.periodIndex,
+              dueOn: fromPrismaDate(next.dueOn),
+              interest: fromDb(next.interestAccrued).toDatabaseString(),
+            };
+          }
+        }
+
         throw new PreviewComplete({
+          earlyInstallment,
           amount: amount.toDatabaseString(),
           interest: plan.interestTotal.toDatabaseString(),
           principal: plan.principalTotal.toDatabaseString(),
